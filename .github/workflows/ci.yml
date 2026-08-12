@@ -85,3 +85,33 @@ jobs:
           name: coverage-pg${{ matrix.postgres }}
           path: coverage.out
           if-no-files-found: error
+
+  outboxprom:
+    name: outboxprom module (client_golang)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          check-latest: true
+
+      # outboxprom pins client_golang and replaces github.com/gokern/outboxer
+      # with the working tree, which keeps that dependency out of the root module
+      # while still building and testing the exported collectors on every PR. It
+      # needs no database: the backlog collector is driven through a fake
+      # outboxer.Querier, so a change to the root that breaks what adopters import
+      # is caught here rather than by them.
+      - name: Test outboxprom
+        working-directory: outboxprom
+        run: |
+          go build ./...
+          go vet ./...
+          go test -race -shuffle=on -covermode=atomic -coverprofile=coverage.out ./...
+
+      - name: Report coverage
+        working-directory: outboxprom
+        run: go tool cover -func=coverage.out | tail -1

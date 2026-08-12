@@ -380,8 +380,25 @@ starts tracking the table, precisely when the backlog is worst.
 ### Metrics
 
 Every metric worth having comes from `Observer` and `Sampler`, and the package ships none of
-them, because names and labels are your organisation's conventions. Wiring your own is a
-table lookup:
+them, because names and labels are your organisation's conventions.
+[`outboxprom`](outboxprom) picks one set and exports it, in a module of its own so
+`client_golang` never reaches this `go.mod`:
+
+```go
+metrics, err := outboxprom.New()
+relay, err := outboxer.NewRelay(pool, publish, outboxer.WithObserver(metrics.Observer()))
+
+sampler, err := outboxer.NewSampler(pool)
+backlog, err := outboxprom.NewBacklog(sampler)
+
+prometheus.MustRegister(metrics, backlog)
+```
+
+Five options cover what the defaults do not: `WithNamespace` for the metric prefix,
+`WithConstLabels` for a shard or tenant, `WithoutTopicLabel` when topics are unbounded,
+`WithLagBuckets` for your own SLO, and `WithSampleTimeout` to bound the scrape's query.
+
+Wiring your own instead is a table lookup:
 
 | Metric | Where it comes from |
 |---|---|
@@ -416,7 +433,7 @@ Each of these is withheld on purpose, not missing.
 | **Guarantee order, or exactly-once** | Replicas are safe but unordered, and delivery is at-least-once; see **Delivery semantics**. |
 | **Give up on a poison row** | It hands you `Delivery.Attempts` and never picks the threshold. Refusing a row whose count has gone absurd is your policy, inside `PublishFunc`. |
 | **Log, or break a circuit** | Every outcome reaches you through `Observer`; stopping is cancelling the context you passed to `Run`. |
-| **Export metrics** | `Observer` and `Sampler` give you the numbers; the names, the labels and the registry are your organisation's, and this `go.mod` stays at one dependency whatever you export them with. |
+| **Export metrics from this module** | This `go.mod` stays at one dependency whatever you export them with. [`outboxprom`](outboxprom) does the exporting, as a module of its own: importing it is opt-in, and not importing it costs you nothing. |
 | **Scrape itself** | `Sampler` has no ticker and starts no goroutine. It reads when you call it, so the cadence, the timeout and the registry belong to your scraper. |
 
 ## Development
@@ -425,15 +442,25 @@ Needs a Postgres the test suite may own outright, since it drops and recreates i
 every run.
 
 ```bash
-make db      # a throwaway Postgres on port 15433
-make test    # go test -race -shuffle=on
+make db               # a throwaway Postgres on port 15433
+make test             # go test -race -shuffle=on
 make lint
-make check   # lint, test, vuln
+make test-outboxprom  # the outboxprom module; needs no database
+make check            # lint, test, test-outboxprom, vuln
 ```
 
 `make` on its own lists the targets. `make db` takes `DB_IMAGE` and `DB_PORT`, which is how
 one leg of the CI matrix is reproduced locally:
 `make db DB_IMAGE=postgres:14-alpine DB_PORT=15444`.
+
+`outboxprom` is a module of its own, so nothing at the root reaches it: `go test
+./...`, `go mod tidy` and `golangci-lint run` all stop at the module boundary, and CI runs
+each of them a second time inside that directory. It shares this `.golangci.yaml`, which
+golangci-lint finds by searching upwards; the few rules that differ for it are marked by path
+there. It depends on the root through a `replace` onto the working tree, so a change here is
+compiled against the collectors that use it — **and that `require` has to name a published
+version before the module is ever tagged**, since Go ignores a dependency's own `replace`
+and an importer would otherwise be sent to `v0.0.0`.
 
 The tests run shuffled and in parallel, here and in CI. Every test creates its own table,
 named after itself, and the reference DDL names the NOTIFY channel after the table, so one

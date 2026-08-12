@@ -56,6 +56,10 @@ test-pgbouncer: ## Run the pooler tests against a real PgBouncer (needs PGBOUNCE
 	POSTGRES_URL='$(POSTGRES_URL)' PGBOUNCER_URL='$(PGBOUNCER_URL)' DIRECT_URL='$(DIRECT_URL)' \
 		go test -race -count=1 -run 'Pooler' -v ./...
 
+.PHONY: test-outboxprom
+test-outboxprom: ## Build, lint and test the outboxprom module (no database needed)
+	cd outboxprom && go build ./... && go vet ./... && go test -race ./... && golangci-lint run ./...
+
 .PHONY: test-cover
 test-cover: ## Run the tests and report total coverage
 	POSTGRES_URL='$(POSTGRES_URL)' $(GO_TEST) -covermode=atomic -coverprofile=coverage.out ./...
@@ -70,8 +74,9 @@ fmt: ## Apply the formatters configured in .golangci.yaml
 	golangci-lint fmt ./...
 
 .PHONY: vuln
-vuln: ## Scan dependencies for known vulnerabilities
+vuln: ## Scan dependencies for known vulnerabilities, in both modules
 	go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+	cd outboxprom && go run golang.org/x/vuln/cmd/govulncheck@latest ./...
 
 .PHONY: check
-check: lint test vuln ## Everything CI runs before merge
+check: lint test test-outboxprom vuln ## Everything CI runs before merge

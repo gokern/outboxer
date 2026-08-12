@@ -9,6 +9,25 @@ updates:
       go-modules:
         patterns: ["*"]
 
+  # An entry of its own, because Dependabot reads one go.mod per directory and
+  # the root entry never sees this one. Without it client_golang and the seven
+  # packages it brings — by count, most of this repo's dependency surface — get
+  # no update pull requests, and govulncheck eventually reports a CVE that
+  # nothing opens a PR to fix.
+  #
+  # Spelled as a second entry rather than with the newer `directories:` list,
+  # which nothing in this repo can check: a config key that turns out not to
+  # exist fails silently in a service nobody runs locally, and two entries are
+  # correct on every version of Dependabot there has ever been.
+  - package-ecosystem: gomod
+    directory: /outboxprom
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      go-modules:
+        patterns: ["*"]
+
   - package-ecosystem: github-actions
     directory: /
     schedule:

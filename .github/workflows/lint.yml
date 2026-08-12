@@ -15,8 +15,16 @@ concurrency:
 
 jobs:
   golangci:
-    name: golangci-lint
+    name: golangci-lint (${{ matrix.module }})
     runs-on: ubuntu-latest
+    # Per module, because golangci-lint does not cross a module boundary: a run
+    # at the root never sees outboxprom. They share the root .golangci.yaml all
+    # the same, which golangci-lint finds by searching upwards, so the two are
+    # held to one policy with the differences spelled out there by path.
+    strategy:
+      fail-fast: false
+      matrix:
+        module: [".", "outboxprom"]
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -35,10 +43,18 @@ jobs:
           # linter deprecation under `default: all`). Bump this on purpose,
           # together with any config/code changes the new version demands.
           version: v2.12.2
+          working-directory: ${{ matrix.module }}
 
   tidy:
-    name: go mod tidy
+    name: go mod tidy (${{ matrix.module }})
     runs-on: ubuntu-latest
+    # Every module in the repo, because an untidy nested one is invisible from
+    # the root: go mod tidy does not cross a module boundary, the same reason
+    # the golangci job above is a matrix over the same list.
+    strategy:
+      fail-fast: false
+      matrix:
+        module: [".", "outboxprom"]
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -50,6 +66,7 @@ jobs:
           check-latest: true
 
       - name: Check go.mod is tidy
+        working-directory: ${{ matrix.module }}
         run: |
           go mod tidy
           git diff --exit-code -- go.mod go.sum

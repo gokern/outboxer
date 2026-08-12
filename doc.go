@@ -68,5 +68,6 @@
 // the relay through [Sampler]; stopping is the caller cancelling the context it
 // passed to [Relay.Run]. Turning either into metrics is the caller's, since
 // metric names and label sets are an organisation's conventions and not a
-// library's.
+// library's. The outboxprom module beside this one picks a set of them and
+// exports it, so adopting them is an import rather than a transcription.
 package outboxer

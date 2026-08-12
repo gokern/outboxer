@@ -13,8 +13,16 @@ permissions:
 
 jobs:
   govulncheck:
-    name: govulncheck
+    name: govulncheck (${{ matrix.module }})
     runs-on: ubuntu-latest
+    # Per module. govulncheck stops at a module boundary like every other Go
+    # tool, so a run at the root sees pgx and nothing else — while
+    # outboxprom carries client_golang and the seven packages it pulls
+    # in, which is now most of the repo's dependency surface by count.
+    strategy:
+      fail-fast: false
+      matrix:
+        module: [".", "outboxprom"]
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -24,3 +32,4 @@ jobs:
         with:
           go-version-file: go.mod
           repo-checkout: false
+          work-dir: ${{ matrix.module }}

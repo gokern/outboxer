@@ -13,7 +13,12 @@ formatters:
       sections:
         - standard
         - default
-        - localmodule
+        # An explicit prefix rather than localmodule: this repo has two modules,
+        # and under localmodule gci run from the root calls the parent import
+        # local while gci run inside outboxprom — which is how CI lints it —
+        # calls the same import third-party, so the two runs rewrite each other
+        # forever. Named outright, both agree.
+        - prefix(github.com/gokern/outboxer)
     golines:
       max-len: 120 # lll's own default, so the two cannot disagree about a line
     gofmt:
@@ -50,13 +55,33 @@ linters:
 
     depguard:
       rules:
+        # The root module. Its dependency list is the point of the package, so
+        # it is spelled out and anything else is a mistake.
         main:
+          files:
+            - "!**/outboxprom/**"
           allow:
             - $gostd
             - github.com/gokern/outboxer # the package's own test binaries
             - github.com/jackc/pgx/v5 # the module's only dependency
             - github.com/stretchr/testify # test-only, and stays that way
             - go.uber.org/goleak # test-only, and stays that way
+
+        # outboxprom is a module of its own that exists to depend on one
+        # third-party library; that dependency is its whole reason to be, and it
+        # never reaches the root go.mod. This config still applies to it, because
+        # golangci-lint finds it by searching upwards when run from its
+        # directory.
+        outboxprom:
+          files:
+            - "**/outboxprom/**"
+          allow:
+            - $gostd
+            - github.com/gokern/outboxer
+            - github.com/jackc/pgx/v5
+            - github.com/stretchr/testify
+            - github.com/prometheus/client_golang # outboxprom's reason to exist
+            - github.com/prometheus/client_model # the protobuf types a Gatherer returns, for assertions
 
     govet:
       enable-all: true # for shadow, which the default set leaves out
@@ -78,6 +103,7 @@ linters:
         - id # a row's primary key
         - fn # the body a with-harness hands its pool to
         - tx # a pgx transaction
+        - ch # the channel prometheus.Collector's own interface names this way
 
     testifylint:
       enable-all: true
@@ -103,6 +129,25 @@ linters:
 
   exclusions:
     rules:
+      # client_golang's option structs carry a dozen optional fields each —
+      # eight of them native-histogram settings that are mutually exclusive with
+      # the classic Buckets this package sets. Filling them to satisfy the linter
+      # would state the opposite of what is meant.
+      - path: outboxprom/
+        linters:
+          - exhaustruct
+        text: "prometheus\\.(Counter|Gauge|Histogram|Summary)Opts"
+
+      # A nested module has to build against the working tree, or a change here
+      # could not be compiled with the change to the root it depends on. Go
+      # ignores a dependency's own replace directives, so it costs an importer
+      # nothing — but the require beside it has to name a real version before
+      # the module is tagged.
+      - path: outboxprom/
+        linters:
+          - gomoddirectives
+        text: "local replacement"
+
       # revive's names for the three size metrics excluded below.
       - path: _test\.go
         linters:
