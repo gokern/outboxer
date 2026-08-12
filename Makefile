@@ -60,6 +60,21 @@ test-pgbouncer: ## Run the pooler tests against a real PgBouncer (needs PGBOUNCE
 test-outboxprom: ## Build, lint and test the outboxprom module (no database needed)
 	cd outboxprom && go build ./... && go vet ./... && go test -race ./... && golangci-lint run ./...
 
+# The combination the replace hides. Every check above builds outboxprom
+# against this working tree; an adopter builds it against the version its
+# require names, and nothing else here ever compiles that pair. Run it before
+# tagging the module.
+.PHONY: release-check
+release-check: ## Build outboxprom against the published root its go.mod requires
+	@ver=$$(cd outboxprom && go list -m -f '{{.Version}}' github.com/gokern/outboxer); \
+	test -n "$$ver" || { echo "outboxprom has no require for github.com/gokern/outboxer"; exit 1; }; \
+	echo "building outboxprom against the published github.com/gokern/outboxer $$ver"; \
+	tmp=$$(mktemp -d) && trap 'rm -rf "$$tmp"' EXIT || exit 1; \
+	cp -R outboxprom/. "$$tmp" && cd "$$tmp" || exit 1; \
+	go mod edit -dropreplace=github.com/gokern/outboxer; \
+	export GOFLAGS=-mod=mod; \
+	go build ./... && go vet ./... && go test -race ./...
+
 .PHONY: test-cover
 test-cover: ## Run the tests and report total coverage
 	POSTGRES_URL='$(POSTGRES_URL)' $(GO_TEST) -covermode=atomic -coverprofile=coverage.out ./...

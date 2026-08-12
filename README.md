@@ -457,10 +457,23 @@ one leg of the CI matrix is reproduced locally:
 ./...`, `go mod tidy` and `golangci-lint run` all stop at the module boundary, and CI runs
 each of them a second time inside that directory. It shares this `.golangci.yaml`, which
 golangci-lint finds by searching upwards; the few rules that differ for it are marked by path
-there. It depends on the root through a `replace` onto the working tree, so a change here is
-compiled against the collectors that use it — **and that `require` has to name a published
-version before the module is ever tagged**, since Go ignores a dependency's own `replace`
-and an importer would otherwise be sent to `v0.0.0`.
+there.
+
+It depends on the root through a `replace` onto the working tree, so a change here is compiled
+against the collectors that use it. Go ignores a dependency's own `replace`, though, so
+**what an adopter compiles against is the `require` beside it** — and the replace is what
+hides a wrong version there until somebody imports the module. That require is
+a floor rather than a pin: it names the oldest root carrying what the module uses, and an
+adopter who asks for a newer one gets the newer one, so it does not move with every release
+here.
+
+Nothing in this repository ever compiles the pair an adopter gets, and CI cannot: while a
+change to both sides is unreleased, that pair is expected not to build. `make release-check`
+compiles it in a copy with the replace dropped. Run it before tagging the module.
+
+Module versions are tags of the form `outboxprom/vX.Y.Z`. The directory prefix is not
+decoration — without it Go does not find the tag — and `v*.*.*` in `release.yml` does not
+match it, so module versions get no GitHub release. The Releases page tracks the library.
 
 The tests run shuffled and in parallel, here and in CI. Every test creates its own table,
 named after itself, and the reference DDL names the NOTIFY channel after the table, so one
