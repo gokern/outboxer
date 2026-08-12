@@ -19,10 +19,16 @@
 // guarantee: rows are claimed with FOR UPDATE SKIP LOCKED, so concurrent
 // workers and replicas are safe but unordered.
 //
-// Both sides name their table through [WithTable], which defaults to "outbox".
+// [NewSampler] builds a third thing that is neither: a reading of the table
+// itself. [Sampler.Sample] reports how much is undelivered, how much is overdue,
+// how old the oldest unpublished fact is and the worst attempt count among them.
+// It is separate from the relay because that reading is wanted precisely when
+// no relay is running: a crashed process reports nothing.
+//
+// All three name their table through [WithTable], which defaults to "outbox".
 // That name is the one fact they have to agree on, so it is also the one option
-// both constructors accept. Every other setting belongs to the relay, and the
-// compiler refuses it on [NewInserter].
+// every constructor accepts. Every other setting belongs to the relay, and the
+// compiler refuses it on [NewInserter] and [NewSampler] alike.
 //
 // # What this package does not own
 //
@@ -57,7 +63,10 @@
 // already owns the database, not to a library that would have to guess at the
 // catalogue to do it.
 //
-// It has no circuit breaker and no logger. Every outcome reaches the caller
-// through [Observer]; stopping is the caller cancelling the context it passed
-// to [Relay.Run].
+// It has no circuit breaker, no logger and no metrics. Every outcome the relay
+// produces reaches the caller through [Observer], and the state that outlives
+// the relay through [Sampler]; stopping is the caller cancelling the context it
+// passed to [Relay.Run]. Turning either into metrics is the caller's, since
+// metric names and label sets are an organisation's conventions and not a
+// library's.
 package outboxer

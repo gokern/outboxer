@@ -79,6 +79,16 @@ func Test_Pooler(t *testing.T) {
 				},
 				outboxer.Message{Topic: "retry", Headers: nil, Payload: []byte("p"), Delay: 0}))
 
+			// The reading is the one statement here whose result type depends
+			// on the protocol mode: an interval would parse in binary and fail
+			// in exec, which is exactly the split these two cases are.
+			sampler, err := outboxer.NewSampler(fixture.pooled, outboxer.WithTable(fixture.table))
+			require.NoError(t, err)
+
+			backlog, err := sampler.Sample(t.Context())
+			require.NoError(t, err)
+			require.Equal(t, int64(2), backlog.Pending, "both rows are pending, read through the pooler")
+
 			warned := newWarnings(t)
 
 			relay, err := outboxer.NewRelay(fixture.pooled, published.Publish,

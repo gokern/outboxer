@@ -39,16 +39,18 @@ of this file is the contract and the behaviour worth knowing before wiring it in
 
 ## Requirements
 
-Go 1.26, `pgx` v5.9, PostgreSQL 14 through 18.
+Requires Go 1.26+ and PostgreSQL 14 through 18.
 
-The Postgres range is what CI runs the whole suite against on every commit, not what the SQL
-looks like it ought to support. Nothing here inspects the server version, so a range no job
-executes would be a promise nobody could discover was broken.
+That Postgres range is what CI runs the whole suite against on every commit, not what the
+SQL looks like it ought to support. Nothing here inspects the server version, so a range no
+job executes would be a promise nobody could discover was broken.
 
 ## The two sides
 
 Two constructors, one per direction, and each validates everything it was given before it
-returns. Nothing configurable is left to be discovered on the path that moves rows.
+returns. Nothing configurable is left to be discovered on the path that moves rows. A third,
+`NewSampler`, reads the table's state rather than moving anything through it; see
+**Observability**.
 
 `NewInserter` builds the write side. `Inserter.Insert` takes the Postgres handle **per
 call**, so the transaction-manager seam is the call site itself: pass a transaction and the
@@ -59,9 +61,10 @@ legitimate; the inserter holds no connection and never decides for you.
 cancelled. The two sides do not have to share a process, and a producer that only writes
 never opens a LISTEN connection.
 
-Both name their table with `WithTable`, which defaults to `outbox`. That name is the one
-fact they have to agree on, so it is also the only option both constructors accept. Every
-other setting belongs to the relay, and the compiler refuses it on `NewInserter`.
+All three name their table with `WithTable`, which defaults to `outbox`. That name is the
+one fact they have to agree on, so it is also the only option every constructor accepts.
+Every other setting belongs to the relay, and the compiler refuses it on `NewInserter` and
+`NewSampler` alike.
 
 ## Delivery semantics
 
@@ -122,6 +125,15 @@ Three things beyond the table itself, in order of how much you need them:
   than `id`, which lets the claim seek straight past deferred rows instead of walking them
   and throwing each one away. Deferral is ordinary traffic here: a broker outage defers the
   whole backlog at once, and `Message.Delay` defers by design.
+
+  Adding `INCLUDE (created_at, attempts)` to it is tempting and mostly is not worth it. At a
+  moderate backlog beside many published rows it turns the bitmap heap scan into an
+  index-only scan and saves a fraction of a millisecond, which is where the read was already
+  cheap. In the case that hurts it does nothing: at a large backlog the planner takes the
+  sequential scan anyway, and forcing the index-only scan instead measured half again
+  slower. An index-only scan wants an all-visible heap, and a live outbox never has one,
+  because every claim updates the pending rows it would otherwise skip reading. Weigh that
+  against a heavier write path.
 - **The `AFTER INSERT` trigger** calling `pg_notify` on the channel. Without it the relay
   polls, which is correct everywhere and slower only where latency is measured in tens of
   milliseconds. The channel name is the table name.
@@ -182,7 +194,7 @@ read values back from: you already hold them.
 
 | Option | Default | Bounds |
 |---|---|---|
-| `WithTable` | `outbox` | the table both sides use; the **only** option `NewInserter` also accepts |
+| `WithTable` | `outbox` | the table every constructor names; the **only** one `NewInserter` and `NewSampler` accept |
 | `WithMaxConcurrency` | 16 | publishes in flight at once; a ceiling, not a steady count |
 | `WithLease` | 60s | how long a claimed row stays undue |
 | `WithPublishTimeout` | 5s | one `PublishFunc` call |
@@ -212,7 +224,7 @@ connection that does not come from the pool.
 
 PgBouncer and friends: the claim, mark, defer, prune and insert paths all work, whether pgx
 prepares its statements or runs in `exec` mode where no parameter's column type is ever
-resolved. That is verified against PgBouncer 1.25.2 in transaction mode and not only
+resolved. That is verified against a real PgBouncer in transaction mode and not only
 simulated; `make test-pgbouncer` runs it against yours. If your pooler predates PgBouncer
 1.21 it cannot route prepared statements at all, and pgx has to be put in `exec` mode for
 reasons that have nothing to do with this package.
@@ -225,7 +237,11 @@ working. That behaviour was measured against a real pooler, and it is why `WithD
 exists instead of a DSN option: derive that connection from the pool's own DSN and it is
 right until the day somebody puts a pooler in front of it.
 
-## Severity
+`Run` owns the connection its `DialFunc` returns. It closes that connection on exit and
+re-dials after a break, so the function must return a fresh connection every time, never a
+shared handle.
+
+## What stops the relay
 
 - **A publish failure is never fatal.** The row is deferred by `RetryFunc` and reported
   through `Observer.Publish`. The deferral is written *before* the observer runs, so a slow
@@ -237,8 +253,8 @@ right until the day somebody puts a pooler in front of it.
   the relay: one message must not stop every other one. Unguarded, a panic would abandon
   every delivery in flight beside it, including rows already published and about to be
   marked, each of which returns at lease expiry as a duplicate. The same row would then meet
-  the same bug after every restart. Match on the error if a row that panics deserves a policy of its own;
-  it will very likely panic again.
+  the same bug after every restart. Match on the error if a row that panics deserves a
+  policy of its own; it will very likely panic again.
 - **A storage failure on the claim is fatal.** `Run` returns it. Nothing was claimed and
   nothing was published, so the cost is delay and not correctness. The relay stops anyway,
   because how long an unreachable database is worth waiting for is your policy and not this
@@ -260,10 +276,13 @@ right until the day somebody puts a pooler in front of it.
   delivery may legally take, `Run` returns `ErrPublishStalled`. Restarting the process is
   the only recovery, and only you can do that: the goroutines holding those slots outlive
   `Run`.
-- **A shutdown that gave up waiting is returned, not whispered.** `Run` returns nil only
-  when in-flight publishes actually finished; when the bounded wait expired it returns
-  `ErrShutdownIncomplete`. They are still running detached and will mark themselves if the
-  process lives, so exiting on that error is what turns it into duplicates.
+- **A shutdown that gave up waiting is returned, not whispered.** Cancellation waits for the
+  in-flight publishes on a context detached from it, so a row already claimed finishes its
+  publish and its mark, and that wait is itself bounded so a publisher ignoring its deadline
+  cannot hang your task group. `Run` returns nil only when those publishes actually
+  finished, and `ErrShutdownIncomplete` when the wait expired instead. They are still
+  running detached and will mark themselves if the process lives, so exiting on that error
+  is what turns it into duplicates.
 
 There is no circuit breaker. How many consecutive failures mean "stop" is policy: you see
 every failure through `Observer.Publish` and cancel the context you passed to `Run`.
@@ -277,29 +296,15 @@ end the process instead: after `ErrPublishStalled` and `ErrShutdownIncomplete` t
 goroutines are still running and still holding pool connections, so rebuilding in a loop
 leaks another set of them on every pass.
 
-Everything `Observer` reports dies with the process, which is a poor place to keep the signal
-that says the process is gone. The one that outlives it is in the table:
-
-```sql
-SELECT count(*), max(attempts) FROM outbox WHERE published_at IS NULL;
-```
-
-A backlog that grows or a maximum attempt count that climbs is visible to anything that can
-reach the database, including while no relay is running at all, which is exactly when every
-in-process signal has stopped reporting.
-
-Shutdown waits for in-flight publishes on a context detached from cancellation and
-separately bounded. A row already claimed finishes its publish and its mark, and the wait
-itself is bounded so a publisher that ignores its deadline cannot hang your task group.
-
-`Run` owns the connection its `DialFunc` returns. It closes that connection on exit and
-re-dials after a break, so the function must return a fresh connection every time, never a
-shared handle.
-
 ## Observability
 
-The package has no logger and no metrics of its own. Everything reaches you through one
-`Observer`, whose fields are all optional:
+The package has no logger and no metrics of its own. Two things report, and they fail in
+opposite directions: `Observer` runs inside the relay and stops when it does, while
+`Sampler` reads the table and keeps answering when no relay is running at all.
+
+### Observer
+
+Every field is optional.
 
 | Field | Fires |
 |---|---|
@@ -315,22 +320,104 @@ reach the broker is failing but not wedged.
 
 All of them run on the relay's own goroutines. Hand work off instead of blocking in one.
 
+### Sampler, and the same reading in SQL
+
+Four numbers about the table, read on demand:
+
+```go
+sampler, err := outboxer.NewSampler(pool, outboxer.WithTable("outbox"))
+stats, err := sampler.Sample(ctx) // Pending, Due, OldestAge, MaxAttempts
+```
+
+The same four numbers in SQL, for the monitoring that owns the database rather than the
+process — a `postgres_exporter` custom query, a Datadog check, a psql session during an
+incident:
+
+```sql
+SELECT count(*) AS pending,
+       count(*) FILTER (WHERE ready_at <= statement_timestamp()) AS due,
+       coalesce(extract(epoch FROM statement_timestamp() - min(created_at)), 0) AS oldest_age_seconds,
+       coalesce(max(attempts), 0) AS max_attempts
+  FROM outbox
+ WHERE published_at IS NULL;
+```
+
+`statement_timestamp()` and not `now()`, which is transaction-start time. Run inside a
+transaction your exporter happened to open, `now()` misses every row that fell due since it
+began, and reports a negative age for a row written since — a claimable row reads as
+`due` = 0, and the age comes back as minus however long the transaction has been open.
+
+Count `pending` and `due` separately or the numbers mislead. `pending` includes rows
+deferred by `Message.Delay` and rows under lease right now, so it tracks load; `due` is what
+should have gone out and did not.
+
+**No single field is the alert.** They discriminate failures together:
+
+| Failure | `Due` | `OldestAge` | `MaxAttempts` | `Pending` |
+|---|---|---|---|---|
+| relay dead or wedged | grows | grows | **frozen** | grows |
+| relay too small for the traffic | grows | grows slowly | low | grows |
+| broker down | ≈0, oscillating | grows | **climbing** | grows |
+| one poison row | ≈0 | grows | climbing on one row | flat |
+
+`Due` reads near zero during a broker outage because the relay keeps claiming: each failing
+row is due for an instant, then deferred by `RetryFunc` for a whole lease. `MaxAttempts`
+frozen against climbing is what separates a dead relay from a dead broker, because the claim
+counts the attempt as it takes the lease.
+
+`OldestAge` has one caveat by construction: a row scheduled far ahead with `Message.Delay`
+counts from when it was written, so a service that schedules days out carries a permanently
+large age and should alert on `Due` and `MaxAttempts` instead. Excluding those rows is
+impossible — deferred, leased and retried rows are indistinguishable in the schema.
+
+**Scrape on the order of tens of seconds, never per request.** While the backlog is small
+`Sample` seeks the partial index and never reads a published row, so it costs microseconds
+however many published rows have accumulated. Once the pending rows are a large fraction of
+the table the planner switches to a sequential scan, which reads the published rows too, and
+the read grows by two to three orders of magnitude. The cost stops tracking the backlog and
+starts tracking the table, precisely when the backlog is worst.
+
+### Metrics
+
+Every metric worth having comes from `Observer` and `Sampler`, and the package ships none of
+them, because names and labels are your organisation's conventions. Wiring your own is a
+table lookup:
+
+| Metric | Where it comes from |
+|---|---|
+| publishes by topic and outcome | `Observer.Publish`, `err == nil` |
+| publish duration | wrap your own `PublishFunc`; the package is not involved |
+| insert-to-publish lag | `time.Since(msg.CreatedAt)` in `Publish`, on success only |
+| attempt distribution | `msg.Attempts` |
+| listener up/down | `Observer.ListenerChanged`; the degrade is otherwise silent |
+| retention volume and failures | `Observer.Pruned` |
+| advisories by class | `Observer.Warned` with `errors.Is` — never by message text |
+| backlog, age, worst attempt count | `Sampler.Sample` |
+
+Two things to get right whichever way you export them:
+
+- **Cardinality.** `Topic` is a label only if your topics are a bounded set. Never label by
+  `Delivery.ID`, a key, or an error's text.
+- **Replicas.** Every replica reports the same table, so aggregate the backlog with
+  `max by`, never `sum`, or it gets multiplied by the replica count.
+
 ## What this package deliberately does not do
 
-Each of these is a capability withheld on purpose, not a gap. The right column says why, and
-whose job it is instead.
+Each of these is withheld on purpose, not missing.
 
 | It does not | Why, and whose job it is |
 |---|---|
-| **Open a transaction** | `DB` is one method, `Exec`: there is no `Begin` to call, so the write side cannot. The relay holds a `*pgxpool.Pool` and is held to it by discipline instead. Every statement it issues is a single statement, which is why the claim can take a lease and count an attempt indivisibly. Atomicity is whatever the handle you pass to `Inserter.Insert` provides: a transaction commits the outbox row with your business data, a pool commits it on its own. Rollback belongs to whoever opened the transaction. |
-| **Open a connection** | The pool and the LISTEN session are yours: your DSN, your TLS, your custom types, your `AfterConnect`. `WithDialer` takes a function instead of a connection because that session is re-dialled after every drop, and must not run through a transaction-pooling pooler. |
-| **Run a migration, or inspect the schema** | The table, its indexes, the NOTIFY trigger and the channel name are yours to create and keep correct. A missing table or column comes back as `ErrSchemaMismatch` on the first statement; a missing index or trigger is silent, and always will be. |
+| **Open a transaction** | `DB` is one method, `Exec`: there is no `Begin` to call, so the write side cannot. The relay holds a `*pgxpool.Pool` and is held to it by discipline instead. Every statement it issues is a single statement, which is how the claim takes a lease and counts an attempt indivisibly. Atomicity is whatever the handle you pass to `Inserter.Insert` provides, and rollback belongs to whoever opened the transaction. |
+| **Open a connection** | The pool and the LISTEN session are yours: your DSN, your TLS, your custom types, your `AfterConnect`. `WithDialer` takes a function rather than a connection because that session is re-dialled after every drop. |
+| **Run a migration, or inspect the schema** | The table, its indexes, the NOTIFY trigger and the channel name are yours to create and keep correct. A missing table or column comes back as `ErrSchemaMismatch` on the first statement; a missing index or trigger is silent, and always will be. See **Schema**. |
 | **Keep one table name across your two binaries** | `WithTable` defaults to `outbox` and both sides have to be given the same value. Declare it once in your own configuration and pass that to each. Where both tables exist a mismatch is invisible from in here, the same way a publisher and a subscriber on different subjects are invisible to a broker. |
 | **Bound its own queries** | Only your context deadline bounds them, and the mark and the deferral run detached from cancellation on purpose. A `statement_timeout` in your `AfterConnect` bounds every query in your service, not only these. |
 | **Interpret your payload or topic** | Bytes and a string, carried verbatim. Serialization, schema registry and routing conventions are yours. |
-| **Guarantee order, or exactly-once** | Rows are claimed with `FOR UPDATE SKIP LOCKED`: replicas are safe but unordered, and delivery is at-least-once. Use `Delivery.ID` as the broker's dedupe key and make consumers idempotent. |
+| **Guarantee order, or exactly-once** | Replicas are safe but unordered, and delivery is at-least-once; see **Delivery semantics**. |
 | **Give up on a poison row** | It hands you `Delivery.Attempts` and never picks the threshold. Refusing a row whose count has gone absurd is your policy, inside `PublishFunc`. |
 | **Log, or break a circuit** | Every outcome reaches you through `Observer`; stopping is cancelling the context you passed to `Run`. |
+| **Export metrics** | `Observer` and `Sampler` give you the numbers; the names, the labels and the registry are your organisation's, and this `go.mod` stays at one dependency whatever you export them with. |
+| **Scrape itself** | `Sampler` has no ticker and starts no goroutine. It reads when you call it, so the cadence, the timeout and the registry belong to your scraper. |
 
 ## Development
 
@@ -338,7 +425,7 @@ Needs a Postgres the test suite may own outright, since it drops and recreates i
 every run.
 
 ```bash
-make db      # a throwaway postgres:17 on port 15433
+make db      # a throwaway Postgres on port 15433
 make test    # go test -race -shuffle=on
 make lint
 make check   # lint, test, vuln

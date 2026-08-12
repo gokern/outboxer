@@ -109,6 +109,11 @@ type insertConfig struct {
 	table string
 }
 
+// sampleConfig is every sampler setting as one value.
+type sampleConfig struct {
+	table string
+}
+
 // relayConfig is every relay setting as one value. Options mutate it and
 // NewRelay validates it as a whole, which is the point: a setting that only
 // exists as a closure cannot be checked against the settings around it.
@@ -149,6 +154,13 @@ type RelayOption interface {
 	applyRelay(cfg *relayConfig) error
 }
 
+// SampleOption configures a Sampler. Sealed like the other two, and for the
+// same reason: the reading side takes the table name and nothing else, so a
+// lease handed to NewSampler is a compile error and not a setting ignored.
+type SampleOption interface {
+	applySample(cfg *sampleConfig) error
+}
+
 // WithTable names the outbox table, on either side. It defaults to "outbox",
 // which is what the reference DDL creates.
 //
@@ -170,14 +182,14 @@ func WithTable(name string) TableOption {
 }
 
 // TableOption carries the table name to whichever side is being built. It is
-// the one option both constructors accept.
+// the one option every constructor accepts.
 //
-// It is a concrete type rather than an interface satisfying both sides,
-// because an exported interface would read as "the option type of this
-// package" and invite `func myOptions() []outboxer.Option` — which compiles,
-// and then does not: interface slices are invariant, so []Option is
-// assignable to neither []InsertOption nor []RelayOption. A value built by
-// hand instead of through WithTable is still validated where it is applied.
+// It is a concrete type rather than an interface satisfying all three, because
+// an exported interface would read as "the option type of this package" and
+// invite `func myOptions() []outboxer.Option` — which compiles, and then does
+// not: interface slices are invariant, so []Option is assignable to none of
+// []InsertOption, []RelayOption or []SampleOption. A value built by hand
+// instead of through WithTable is still validated where it is applied.
 type TableOption string
 
 func (t TableOption) applyInsert(cfg *insertConfig) error {
@@ -192,6 +204,17 @@ func (t TableOption) applyInsert(cfg *insertConfig) error {
 }
 
 func (t TableOption) applyRelay(cfg *relayConfig) error {
+	err := validateTable(string(t))
+	if err != nil {
+		return err
+	}
+
+	cfg.table = string(t)
+
+	return nil
+}
+
+func (t TableOption) applySample(cfg *sampleConfig) error {
 	err := validateTable(string(t))
 	if err != nil {
 		return err
@@ -391,6 +414,26 @@ func buildInsertConfig(opts []InsertOption) (insertConfig, error) {
 		}
 
 		err := opt.applyInsert(&cfg)
+		if err != nil {
+			return empty, err
+		}
+	}
+
+	return cfg, nil
+}
+
+// buildSampleConfig applies the options over the defaults.
+func buildSampleConfig(opts []SampleOption) (sampleConfig, error) {
+	var empty sampleConfig
+
+	cfg := sampleConfig{table: defaultTable}
+
+	for _, opt := range opts {
+		if opt == nil {
+			return empty, invalidConfig("nil option")
+		}
+
+		err := opt.applySample(&cfg)
 		if err != nil {
 			return empty, err
 		}

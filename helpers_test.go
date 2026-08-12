@@ -466,6 +466,20 @@ func insertDueAt(t *testing.T, pool *pgxpool.Pool, table string, overdue time.Du
 	return id
 }
 
+// insertAgedAt plants a row that was written age ago, which the write side
+// cannot produce: created_at is stamped by the server at insert, and nothing in
+// the API backdates it. ready_at follows created_at, so the row is also due.
+func insertAgedAt(t *testing.T, pool *pgxpool.Pool, table string, age time.Duration) {
+	t.Helper()
+
+	_, err := pool.Exec(t.Context(),
+		fmt.Sprintf(`INSERT INTO %s (topic, payload, created_at, ready_at)
+		             VALUES ('t', 'p', clock_timestamp() - make_interval(secs => $1),
+		                                clock_timestamp() - make_interval(secs => $1))`, table),
+		age.Seconds())
+	require.NoError(t, err)
+}
+
 // claimOne runs the relay's own claim statement for a single row and reports
 // which one it took, so a test can assert on the claim's choice instead of on
 // what a relay eventually delivered.

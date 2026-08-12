@@ -36,6 +36,14 @@ func ScanStatementsForTest(table string) map[string]string {
 	}
 }
 
+// SampleStatementForTest renders the reading so a test can ask the planner
+// whether it is still servable by the claim's partial index. It is apart from
+// ScanStatementsForTest because it has no index bound to keep: it aggregates
+// every pending row by design, and what it has to keep is the predicate.
+func SampleStatementForTest(table string) string {
+	return sampleSQL(table)
+}
+
 // StallAfterForTest shortens the stall threshold on an already-built relay.
 //
 // The threshold is twice the publish timeout plus the internal mark bound, and

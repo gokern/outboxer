@@ -216,3 +216,37 @@ func ExampleRelay_Run() {
 		}
 	}
 }
+
+// The reading that outlives the relay: built once beside the inserter, called
+// on a timer by whatever exports your metrics. Nothing here starts a goroutine,
+// so the cadence and the timeout belong to the caller.
+func ExampleNewSampler() {
+	var pool *pgxpool.Pool
+
+	sampler, err := outboxer.NewSampler(pool, outboxer.WithTable("events"))
+	if err != nil {
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	stats, err := sampler.Sample(ctx)
+	if err != nil {
+		slog.Error("outbox unreadable", "err", err)
+
+		// Report nothing, never a zero backlog: a gauge that drops to zero
+		// because the database is unreachable is indistinguishable from an
+		// outbox that has just been drained.
+		return
+	}
+
+	// Due says nothing is claiming. A broker outage hides from it instead: the
+	// relay keeps claiming and deferring, so Due stays near zero while
+	// MaxAttempts climbs.
+	slog.Info("outbox",
+		"pending", stats.Pending,
+		"due", stats.Due,
+		"oldest_age_seconds", stats.OldestAge.Seconds(),
+		"max_attempts", stats.MaxAttempts)
+}
