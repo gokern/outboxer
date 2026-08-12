@@ -1,0 +1,87 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Test (PostgreSQL ${{ matrix.postgres }})
+    runs-on: ubuntu-latest
+
+    # The matrix is the support policy rather than a courtesy. Nothing in this
+    # package inspects the server version, so a statement that stops working on
+    # a release the README claims can only be found by running against it. The
+    # range is every branch upstream still supports; drop the oldest when it
+    # goes end-of-life rather than leaving a claim nothing checks.
+    strategy:
+      fail-fast: false
+      matrix:
+        postgres: ["14", "15", "16", "17", "18"]
+
+    # The tests fail rather than skip without a database, so every run here is a
+    # real run. Linux only: the suite needs this service container.
+    services:
+      postgres:
+        image: postgres:${{ matrix.postgres }}-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: outboxer_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          check-latest: true
+
+      - name: Download modules
+        run: go mod download
+
+      - name: Verify modules
+        run: go mod verify
+
+      - name: Build
+        run: go build ./...
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Test with race and coverage
+        env:
+          POSTGRES_URL: postgres://postgres:postgres@127.0.0.1:5432/outboxer_test?sslmode=disable
+        # Shuffled: the suite shares one database, so a test that leaves state
+        # behind changes what the next one measures. A fixed order hides that.
+        run: go test -race -shuffle=on -covermode=atomic -coverprofile=coverage.out ./...
+
+      - name: Report coverage
+        run: go tool cover -func=coverage.out | tail -1
+
+      - name: Upload coverage
+        uses: actions/upload-artifact@v7
+        with:
+          # Suffixed because artifact names are unique per run and every matrix
+          # leg produces one.
+          name: coverage-pg${{ matrix.postgres }}
+          path: coverage.out
+          if-no-files-found: error

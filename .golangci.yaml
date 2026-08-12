@@ -1,0 +1,128 @@
+version: "2"
+
+run:
+  timeout: 5m
+
+formatters:
+  enable:
+    - gci
+    - golines
+    - gofmt
+  settings:
+    gci:
+      sections:
+        - standard
+        - default
+        - localmodule
+    golines:
+      max-len: 120 # lll's own default, so the two cannot disagree about a line
+    gofmt:
+      rewrite-rules:
+        - pattern: "interface{}"
+          replacement: "any"
+        - pattern: "a[b:len(a)]"
+          replacement: "a[b:]"
+
+linters:
+  default: all
+  disable:
+    - gomodguard # deprecated; gomodguard_v2 is already on via default: all
+    - wsl # deprecated alias of wsl_v5, which default: all still enables
+    - wsl_v5 # whitespace cuddling rules are too noisy for this codebase
+    # This package wraps where an error crosses its API, not where pgx returns
+    # one: claim and the other internal helpers pass through, and dispatch adds
+    # "outboxer: claim from <table>". wrapcheck cannot see that boundary and
+    # flags the helpers, so it is silent here only by accident of asSchemaError
+    # standing between the pgx call and the return.
+    - wrapcheck
+
+  settings:
+    ireturn:
+      # The first four are ireturn's own defaults, restated because setting
+      # allow at all replaces them; the Option types are sealed interfaces, so
+      # a relay setting cannot compile against NewInserter.
+      allow:
+        - anon
+        - error
+        - empty
+        - stdlib
+        - github.com/gokern/outboxer\.(Insert|Relay)?Option
+
+    depguard:
+      rules:
+        main:
+          allow:
+            - $gostd
+            - github.com/gokern/outboxer # the package's own test binaries
+            - github.com/jackc/pgx/v5 # the module's only dependency
+            - github.com/stretchr/testify # test-only, and stays that way
+            - go.uber.org/goleak # test-only, and stays that way
+
+    govet:
+      enable-all: true # for shadow, which the default set leaves out
+      disable:
+        - fieldalignment # padding is not worth reordering the structs over
+      settings:
+        shadow:
+          strict: true
+
+    cyclop:
+      package-average: 10.0 # off by default; the per-function limit stays at cyclop's
+
+    varnamelen:
+      ignore-names:
+        - db # any handle satisfying DB, as Insert takes
+        - i # a range index
+        - n # a count, as WithMaxConcurrency takes
+        - tc # table-driven case
+        - id # a row's primary key
+        - fn # the body a with-harness hands its pool to
+        - tx # a pgx transaction
+
+    testifylint:
+      enable-all: true
+
+    usetesting:
+      # Both off upstream; together they enforce t.Context() over a context
+      # nothing cancels, which is how a leaked goroutine goes unnoticed.
+      context-background: true
+      context-todo: true
+
+    revive:
+      enable-all-rules: true
+      confidence: 0.1
+      rules:
+        - name: add-constant
+          disabled: true # counts 0 and 1 as magic numbers
+        - name: line-length-limit
+          disabled: true # golines owns the width, at 120 rather than this rule's 80
+        - name: cognitive-complexity
+          arguments: [10] # 7 by default; dispatch and buildRelayConfig are flat guard sequences
+        - name: max-public-structs
+          arguments: [6] # 5 by default, counted per file; options.go declares the package's whole option vocabulary, and TableOption is its sixth public type
+
+  exclusions:
+    rules:
+      # revive's names for the three size metrics excluded below.
+      - path: _test\.go
+        linters:
+          - revive
+        text: "^(function-length|cognitive-complexity|cyclomatic)"
+
+      - path: _test\.go
+        linters:
+          - govet
+        text: "^shadow" # a subtest redeclares err in its own scope
+
+      - path: _test\.go
+        linters:
+          - cyclop # a grouped test's branches belong to its subtests
+          - err113 # a test builds the error it is about to hand to a callback
+          - exhaustruct # a test fills the fields under test and leaves the rest zero
+          - funlen # the table is the test; TestInserter_Insert is 281 lines of it
+          - gochecknoglobals # TestMain has to stash the DSN and the embedded DDL somewhere
+          - goconst # repeated topic literals ("evt", "user.created") read better inline
+          - gocognit # the same branches as cyclop, counted the other way
+          - ireturn # a generic test helper returns its type parameter
+          - maintidx # driven by the size of the table, not by any complexity in it
+          - testableexamples # the examples need a live Postgres, so they are compile-only

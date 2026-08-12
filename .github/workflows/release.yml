@@ -1,0 +1,60 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: GitHub Release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      # persist-credentials is off because the release below authenticates
+      # through GH_TOKEN, not through git, so there is no reason to leave this
+      # job's write-scoped credential sitting in .git/config afterwards.
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          check-latest: true
+
+      # Deliberately not the test suite. CI already ran it against a real
+      # Postgres on the commit this tag points at, and running dependency code
+      # inside the one job that can publish a release buys nothing that the
+      # merge gate did not already buy.
+      - name: Verify the module
+        run: |
+          go mod verify
+          go vet ./...
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          prerelease_flag=""
+          case "$tag" in
+            *-*) prerelease_flag="--prerelease" ;;
+          esac
+          gh release create "$tag" \
+            --title "$tag" \
+            --generate-notes \
+            --verify-tag \
+            $prerelease_flag
