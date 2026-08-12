@@ -13,7 +13,7 @@ import (
 	"github.com/gokern/outboxer"
 )
 
-// sample.go is the one reading that outlives the process. Everything Observer
+// sampler.go is the one reading that outlives the process. Everything Observer
 // reports dies with the relay, and the state that says the relay is gone can
 // only come from the table, so these cases are about what four numbers mean
 // rather than about whether a query runs.
@@ -25,7 +25,7 @@ import (
 
 // A reading of a table nothing is draining: the fields have to separate rows
 // that are overdue from rows that are merely undelivered.
-func Test_Sample(t *testing.T) {
+func Test_Stats(t *testing.T) {
 	t.Parallel()
 
 	// Published rows are invisible to every field, and a row deferred into the
@@ -55,7 +55,7 @@ func Test_Sample(t *testing.T) {
 			sampler, err := outboxer.NewSampler(pool, outboxer.WithTable(table))
 			require.NoError(t, err)
 
-			stats, err := sampler.Sample(t.Context())
+			stats, err := sampler.Stats(t.Context())
 			require.NoError(t, err)
 
 			require.Equal(t, int64(overdue+1), stats.Pending, "the deferred row is pending, the published ones are not")
@@ -80,7 +80,7 @@ func Test_Sample(t *testing.T) {
 			sampler, err := outboxer.NewSampler(pool, outboxer.WithTable(table))
 			require.NoError(t, err)
 
-			stats, err := sampler.Sample(t.Context())
+			stats, err := sampler.Stats(t.Context())
 			require.NoError(t, err)
 
 			require.InDelta(t, age.Seconds(), stats.OldestAge.Seconds(), settle.Seconds(),
@@ -89,7 +89,7 @@ func Test_Sample(t *testing.T) {
 	})
 
 	// Claiming is attempting: the claim takes the lease and counts the attempt in
-	// one statement. That is what makes a frozen MaxAttempts mean nothing is
+	// one statement. That is what makes a frozen PeakAttempts mean nothing is
 	// claiming, and a climbing one mean the broker is refusing the rows.
 	t.Run("a claimed row leaves Due and counts an attempt", func(t *testing.T) {
 		t.Parallel()
@@ -101,19 +101,19 @@ func Test_Sample(t *testing.T) {
 			sampler, err := outboxer.NewSampler(pool, outboxer.WithTable(table))
 			require.NoError(t, err)
 
-			before, err := sampler.Sample(t.Context())
+			before, err := sampler.Stats(t.Context())
 			require.NoError(t, err)
 			require.Equal(t, int64(2), before.Due)
-			require.Zero(t, before.MaxAttempts, "nothing has claimed yet")
+			require.Zero(t, before.PeakAttempts, "nothing has claimed yet")
 
 			claimOne(t, pool, table)
 
-			after, err := sampler.Sample(t.Context())
+			after, err := sampler.Stats(t.Context())
 			require.NoError(t, err)
 
 			require.Equal(t, int64(2), after.Pending, "the claimed row is still undelivered")
 			require.Equal(t, int64(1), after.Due, "the lease took it out of the due set")
-			require.Equal(t, 1, after.MaxAttempts, "the claim counted the attempt")
+			require.Equal(t, 1, after.PeakAttempts, "the claim counted the attempt")
 		})
 	})
 
@@ -127,10 +127,10 @@ func Test_Sample(t *testing.T) {
 			sampler, err := outboxer.NewSampler(pool, outboxer.WithTable(table))
 			require.NoError(t, err)
 
-			stats, err := sampler.Sample(t.Context())
+			stats, err := sampler.Stats(t.Context())
 			require.NoError(t, err)
 
-			require.Equal(t, outboxer.Stats{Pending: 0, Due: 0, OldestAge: 0, MaxAttempts: 0}, stats)
+			require.Equal(t, outboxer.Stats{Pending: 0, Due: 0, OldestAge: 0, PeakAttempts: 0}, stats)
 		})
 	})
 }
@@ -139,7 +139,7 @@ func Test_Sample(t *testing.T) {
 // catch, and that both fail in production rather than here: the encoding of the
 // age, and whether the statement still lines up with the index it was written
 // for.
-func Test_Sample_StaysCorrectUnderTheServersOwnSettings(t *testing.T) {
+func Test_Stats_StaysCorrectUnderTheServersOwnSettings(t *testing.T) {
 	t.Parallel()
 
 	// The session settings below belong to the application, never to this
@@ -163,7 +163,7 @@ func Test_Sample_StaysCorrectUnderTheServersOwnSettings(t *testing.T) {
 			sampler, err := outboxer.NewSampler(pool, outboxer.WithTable(table))
 			require.NoError(t, err)
 
-			stats, err := sampler.Sample(t.Context())
+			stats, err := sampler.Stats(t.Context())
 			require.NoError(t, err)
 
 			require.InDelta(t, age.Hours(), stats.OldestAge.Hours(), 1,
@@ -201,7 +201,7 @@ func Test_Sample_StaysCorrectUnderTheServersOwnSettings(t *testing.T) {
 			sampler, err := outboxer.NewSampler(tx, outboxer.WithTable(table))
 			require.NoError(t, err)
 
-			stats, err := sampler.Sample(t.Context())
+			stats, err := sampler.Stats(t.Context())
 			require.NoError(t, err)
 
 			require.Equal(t, int64(1), stats.Due,
@@ -232,8 +232,8 @@ func Test_Sample_StaysCorrectUnderTheServersOwnSettings(t *testing.T) {
 
 			for range scrapers {
 				group.Go(func() {
-					stats, sampleErr := sampler.Sample(t.Context())
-					if sampleErr == nil {
+					stats, statsErr := sampler.Stats(t.Context())
+					if statsErr == nil {
 						results <- stats
 					}
 				})
@@ -320,7 +320,7 @@ func Test_Sample_StaysCorrectUnderTheServersOwnSettings(t *testing.T) {
 // What the reading refuses, and how it says so. A scrape runs unattended on a
 // timer, so each of these is something a caller finds out about only through
 // the error it gets back.
-func Test_Sample_Refusals(t *testing.T) {
+func Test_Stats_Refusals(t *testing.T) {
 	t.Parallel()
 
 	// The same translation the write side does, on the read side's own path: a
@@ -334,7 +334,7 @@ func Test_Sample_Refusals(t *testing.T) {
 			absent, err := outboxer.NewSampler(pool, outboxer.WithTable("definitely_absent"))
 			require.NoError(t, err)
 
-			_, err = absent.Sample(t.Context())
+			_, err = absent.Stats(t.Context())
 			require.ErrorIs(t, err, outboxer.ErrSchemaMismatch)
 
 			var pgErr *pgconn.PgError
@@ -348,7 +348,7 @@ func Test_Sample_Refusals(t *testing.T) {
 			shallow, err := outboxer.NewSampler(pool, outboxer.WithTable("shallow"))
 			require.NoError(t, err)
 
-			_, err = shallow.Sample(t.Context())
+			_, err = shallow.Stats(t.Context())
 			require.ErrorIs(t, err, outboxer.ErrSchemaMismatch)
 			require.ErrorAs(t, err, &pgErr)
 			require.Equal(t, "42703", pgErr.Code)
@@ -364,7 +364,7 @@ func Test_Sample_Refusals(t *testing.T) {
 		withTempTable(t, func(*pgxpool.Pool) {
 			var zero outboxer.Sampler
 
-			_, err := zero.Sample(t.Context())
+			_, err := zero.Stats(t.Context())
 			require.ErrorIs(t, err, outboxer.ErrInvalidConfig)
 		})
 	})
@@ -372,7 +372,7 @@ func Test_Sample_Refusals(t *testing.T) {
 	// The handle is taken at construction, so this is the one place a nil
 	// interface can be refused. A typed nil — a (*pgxpool.Pool)(nil) in an
 	// interface — is not caught here and cannot be without reflection; it is the
-	// caller's to avoid, exactly as it is for Inserter.Insert.
+	// caller's to avoid, exactly as it is for Producer.Insert.
 	t.Run("refuses a missing handle", func(t *testing.T) {
 		t.Parallel()
 
@@ -394,7 +394,7 @@ func Test_Sample_Refusals(t *testing.T) {
 			ctx, cancel := context.WithCancel(t.Context())
 			cancel()
 
-			_, err = sampler.Sample(ctx)
+			_, err = sampler.Stats(ctx)
 			require.ErrorIs(t, err, context.Canceled)
 		})
 	})

@@ -22,7 +22,7 @@ func Example() {
 		reg  = prometheus.NewRegistry()
 	)
 
-	metrics, err := outboxprom.New()
+	metrics, err := outboxprom.NewMetrics()
 	if err != nil {
 		return
 	}
@@ -82,7 +82,7 @@ func ExampleNewBacklog() {
 // become a label. Everything else this package exports is unlabelled already, so
 // this one option is the whole cardinality decision.
 func ExampleWithoutTopicLabel() {
-	metrics, err := outboxprom.New(outboxprom.WithoutTopicLabel())
+	metrics, err := outboxprom.NewMetrics(outboxprom.WithoutTopicLabel())
 	if err != nil {
 		return
 	}

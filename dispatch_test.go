@@ -116,7 +116,7 @@ func Test_Lease(t *testing.T) {
 			eventually(t, "reclaimed once the lease expired", func() bool { return published.count() == 1 })
 			require.NoError(t, stop())
 
-			require.Equal(t, 2, published.all()[0].Attempts,
+			require.Equal(t, 2, published.all()[0].Attempt,
 				"the attempt that killed the process still counted")
 		})
 	})

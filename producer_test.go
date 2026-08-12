@@ -14,7 +14,7 @@ import (
 	"github.com/gokern/outboxer"
 )
 
-// insert.go is the write side, and its whole promise is atomicity: the outbox
+// producer.go is the write side, and its whole promise is atomicity: the outbox
 // row and the business data commit together or neither does, because the caller
 // hands in the handle. That is why almost every case here runs on the
 // temp-table harness: the write side needs no contention, and a session-private
@@ -44,7 +44,7 @@ func TestWithTable_RejectsNamesItCannotSafelyInterpolate(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			_, err := outboxer.NewInserter(outboxer.WithTable(tc.table))
+			_, err := outboxer.NewProducer(outboxer.WithTable(tc.table))
 			require.ErrorIs(t, err, outboxer.ErrInvalidConfig)
 
 			_, err = outboxer.NewRelay(&pgxpool.Pool{}, func(context.Context, outboxer.Delivery) error {
@@ -56,9 +56,9 @@ func TestWithTable_RejectsNamesItCannotSafelyInterpolate(t *testing.T) {
 }
 
 // Insert is the write side: it puts a row in the same transaction as the
-// business data, or it puts nothing. One Inserter serves every handle, so the
+// business data, or it puts nothing. One Producer serves every handle, so the
 // same value writes on a pool and inside a transaction.
-func TestInserter_Insert(t *testing.T) {
+func TestProducer_Insert(t *testing.T) {
 	t.Parallel()
 
 	t.Run("writes the columns the claim reads", func(t *testing.T) {
@@ -288,24 +288,24 @@ func TestInserter_Insert(t *testing.T) {
 		})
 	})
 
-	// One Inserter serves every handle: the same value writes on the pool and
+	// One Producer serves every handle: the same value writes on the pool and
 	// inside a transaction, because the handle is an argument and not state.
 	// That is what lets one be built at wiring time and shared for the life of the
 	// process without deciding anything about atomicity in advance.
-	t.Run("one inserter serves every handle", func(t *testing.T) {
+	t.Run("one producer serves every handle", func(t *testing.T) {
 		t.Parallel()
 
 		withTempTable(t, func(pool *pgxpool.Pool) {
-			inserter, err := outboxer.NewInserter()
+			producer, err := outboxer.NewProducer()
 			require.NoError(t, err)
 
-			require.NoError(t, inserter.Insert(t.Context(), pool,
+			require.NoError(t, producer.Insert(t.Context(), pool,
 				outboxer.Message{Topic: "on-pool", Headers: nil, Payload: []byte("p"), Delay: 0}))
 
 			tx, err := pool.Begin(t.Context())
 			require.NoError(t, err)
 
-			require.NoError(t, inserter.Insert(t.Context(), tx,
+			require.NoError(t, producer.Insert(t.Context(), tx,
 				outboxer.Message{Topic: "in-tx", Headers: nil, Payload: []byte("p"), Delay: 0}))
 			require.NoError(t, tx.Rollback(t.Context()))
 
@@ -314,7 +314,7 @@ func TestInserter_Insert(t *testing.T) {
 		})
 	})
 
-	// Inserter is exported so it can be held in a struct field, and an unset
+	// Producer is exported so it can be held in a struct field, and an unset
 	// field is how one arrives here. Its statement is empty, and pgx panics on
 	// an empty statement instead of failing, so this reports instead, the same
 	// way every other misuse in this package does.
@@ -322,7 +322,7 @@ func TestInserter_Insert(t *testing.T) {
 		t.Parallel()
 
 		withTempTable(t, func(pool *pgxpool.Pool) {
-			var zero outboxer.Inserter
+			var zero outboxer.Producer
 
 			err := zero.Insert(t.Context(), pool,
 				dueNow())

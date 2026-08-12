@@ -17,7 +17,7 @@
 // while no relay is running at all, which is exactly when every in-process
 // signal has stopped.
 //
-//	metrics, err := outboxprom.New()
+//	metrics, err := outboxprom.NewMetrics()
 //	relay, err := outboxer.NewRelay(pool, publish, outboxer.WithObserver(metrics.Observer()))
 //
 //	sampler, err := outboxer.NewSampler(pool)
@@ -78,7 +78,7 @@ func invalidOption(format string, args ...any) error {
 	return fmt.Errorf("outboxprom: %w: %s", outboxer.ErrInvalidConfig, fmt.Sprintf(format, args...))
 }
 
-// Option configures [New], [NewBacklog], or both.
+// Option configures [NewMetrics], [NewBacklog], or both.
 //
 // It is one type rather than the sealed pair outboxer uses for its own two
 // sides, because the same namespace and constant labels almost always belong on
@@ -89,7 +89,7 @@ func invalidOption(format string, args ...any) error {
 //
 // The cost is that an option landing on the wrong constructor is refused at run
 // time instead of by the compiler. It is refused, though, and never quietly
-// ignored: [WithSampleTimeout] handed to [New] is an error naming itself.
+// ignored: [WithSampleTimeout] handed to [NewMetrics] is an error naming itself.
 type Option struct {
 	name  string
 	scope scope
@@ -108,7 +108,7 @@ const (
 func (s scope) String() string {
 	switch s {
 	case scopeMetrics:
-		return "New"
+		return "NewMetrics"
 	case scopeBacklog:
 		return "NewBacklog"
 	case scopeBoth:

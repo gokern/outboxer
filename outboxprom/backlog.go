@@ -39,11 +39,11 @@ type Backlog struct {
 	sampler *outboxer.Sampler
 	timeout time.Duration
 
-	pending   *prometheus.Desc
-	due       *prometheus.Desc
-	oldestAge *prometheus.Desc
-	attempts  *prometheus.Desc
-	failures  *prometheus.Desc
+	pending      *prometheus.Desc
+	due          *prometheus.Desc
+	oldestAge    *prometheus.Desc
+	peakAttempts *prometheus.Desc
+	failures     *prometheus.Desc
 
 	failed atomic.Uint64
 }
@@ -75,7 +75,7 @@ func NewBacklog(sampler *outboxer.Sampler, opts ...Option) (*Backlog, error) {
 			"Undelivered rows that are claimable now and unclaimed."),
 		oldestAge: name("oldest_age_seconds",
 			"Age of the oldest undelivered row, on the database clock."),
-		attempts: name("max_attempts",
+		peakAttempts: name("peak_attempts",
 			"Highest attempt count among undelivered rows."),
 		failures: name("sample_failures_total",
 			"Scrapes that could not read the outbox table."),
@@ -87,7 +87,7 @@ func (b *Backlog) Describe(ch chan<- *prometheus.Desc) {
 	ch <- b.pending
 	ch <- b.due
 	ch <- b.oldestAge
-	ch <- b.attempts
+	ch <- b.peakAttempts
 	ch <- b.failures
 }
 
@@ -103,7 +103,7 @@ func (b *Backlog) Collect(ch chan<- prometheus.Metric) {
 	ctx, cancel := context.WithTimeout(context.Background(), b.timeout)
 	defer cancel()
 
-	stats, err := b.sampler.Sample(ctx)
+	stats, err := b.sampler.Stats(ctx)
 	if err != nil {
 		ch <- prometheus.MustNewConstMetric(b.failures, prometheus.CounterValue,
 			float64(b.failed.Add(1)))
@@ -114,6 +114,6 @@ func (b *Backlog) Collect(ch chan<- prometheus.Metric) {
 	ch <- prometheus.MustNewConstMetric(b.pending, prometheus.GaugeValue, float64(stats.Pending))
 	ch <- prometheus.MustNewConstMetric(b.due, prometheus.GaugeValue, float64(stats.Due))
 	ch <- prometheus.MustNewConstMetric(b.oldestAge, prometheus.GaugeValue, stats.OldestAge.Seconds())
-	ch <- prometheus.MustNewConstMetric(b.attempts, prometheus.GaugeValue, float64(stats.MaxAttempts))
+	ch <- prometheus.MustNewConstMetric(b.peakAttempts, prometheus.GaugeValue, float64(stats.PeakAttempts))
 	ch <- prometheus.MustNewConstMetric(b.failures, prometheus.CounterValue, float64(b.failed.Load()))
 }

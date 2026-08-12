@@ -84,8 +84,8 @@ func Test_Panics(t *testing.T) {
 		withTable(t, 3, func(pool *pgxpool.Pool, table string) {
 			var panics atomic.Int64
 
-			published := newCollector(func(msg outboxer.Delivery) error {
-				if msg.Topic == "poison" && panics.Add(1) == 1 {
+			published := newCollector(func(delivery outboxer.Delivery) error {
+				if delivery.Topic == "poison" && panics.Add(1) == 1 {
 					panic("the payload tripped a bug in the caller's code")
 				}
 
@@ -99,7 +99,7 @@ func Test_Panics(t *testing.T) {
 				outboxer.WithPollInterval(50*time.Millisecond),
 				outboxer.WithRetry(func(outboxer.Delivery, error) time.Duration { return 50 * time.Millisecond }),
 				outboxer.WithObserver(outboxer.Observer{
-					Publish: func(_ context.Context, _ outboxer.Delivery, err error) {
+					Published: func(_ context.Context, _ outboxer.Delivery, err error) {
 						if err == nil {
 							return
 						}
@@ -164,7 +164,7 @@ func Test_Panics(t *testing.T) {
 					panic("the caller's backoff policy has a bug")
 				}),
 				outboxer.WithObserver(outboxer.Observer{
-					Publish: func(context.Context, outboxer.Delivery, error) {
+					Published: func(context.Context, outboxer.Delivery, error) {
 						panic("the caller's metrics callback has a bug")
 					},
 					Warned: func(err error) {

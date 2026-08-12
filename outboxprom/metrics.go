@@ -15,7 +15,7 @@ import (
 // It is a [prometheus.Collector] and registers nothing itself, so it goes into
 // whichever registry the process already uses:
 //
-//	metrics, err := outboxprom.New()
+//	metrics, err := outboxprom.NewMetrics()
 //	prometheus.MustRegister(metrics)
 //	relay, err := outboxer.NewRelay(pool, publish, outboxer.WithObserver(metrics.Observer()))
 //
@@ -34,12 +34,12 @@ type Metrics struct {
 	topicLabel bool
 }
 
-// New builds the relay-side collectors.
+// NewMetrics builds the relay-side collectors.
 //
 // It returns an error rather than clamping or ignoring a bad setting, which is
 // the rule the parent package follows everywhere: what the caller declared and
 // what the process exports are the same thing.
-func New(opts ...Option) (*Metrics, error) {
+func NewMetrics(opts ...Option) (*Metrics, error) {
 	cfg, err := buildConfig(scopeMetrics, opts)
 	if err != nil {
 		return nil, err
@@ -102,7 +102,7 @@ func New(opts ...Option) (*Metrics, error) {
 // Observer is the value to hand to [outboxer.WithObserver].
 //
 // Every callback in it runs on the relay's own goroutines, and several run
-// concurrently — Publish from every publisher at once. Everything it touches
+// concurrently — Published from every publisher at once. Everything it touches
 // here is a prometheus collector, which is safe for concurrent use; a counter of
 // your own would not have been.
 //
@@ -111,25 +111,25 @@ func New(opts ...Option) (*Metrics, error) {
 // exported already. Wire it yourself if you want it.
 func (m *Metrics) Observer() outboxer.Observer {
 	return outboxer.Observer{
-		Publish: func(_ context.Context, msg outboxer.Delivery, err error) {
+		Published: func(_ context.Context, delivery outboxer.Delivery, err error) {
 			result := "ok"
 			if err != nil {
 				result = "error"
 			}
 
 			if m.topicLabel {
-				m.publishes.WithLabelValues(msg.Topic, result).Inc()
+				m.publishes.WithLabelValues(delivery.Topic, result).Inc()
 			} else {
 				m.publishes.WithLabelValues(result).Inc()
 			}
 
-			m.attempts.Observe(float64(msg.Attempts))
+			m.attempts.Observe(float64(delivery.Attempt))
 
 			// Only on success. A failed attempt has not finished waiting, and
 			// counting it would report a lag shorter than the one the message
 			// eventually suffers.
 			if err == nil {
-				m.lag.Observe(time.Since(msg.CreatedAt).Seconds())
+				m.lag.Observe(time.Since(delivery.CreatedAt).Seconds())
 			}
 		},
 
@@ -189,7 +189,7 @@ func (m *Metrics) Collect(ch chan<- prometheus.Metric) {
 // outboxer exports. ErrInvalidConfig is here because the poll-interval advisory
 // carries it. ErrPublishPanicked is absent deliberately: a panicking
 // PublishFunc is returned as that publish's error, so it reaches RetryFunc and
-// Observer.Publish and never Warned. A case for it would be a label that can
+// Observer.Published and never Warned. A case for it would be a label that can
 // never move — a row on a dashboard sitting at zero, read as good news.
 func warningKind(err error) string {
 	switch {

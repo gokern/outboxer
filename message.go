@@ -39,14 +39,14 @@ type Delivery struct {
 	// the same message twice.
 	ID int64
 
-	// Attempts counts this attempt, not the ones before it: a freshly claimed
-	// row arrives with Attempts == 1. The counter is written by the claim, so
-	// a row that killed the process mid-delivery still counted and cannot loop
-	// forever at zero.
+	// Attempt is which attempt this delivery is: a freshly claimed row arrives
+	// with Attempt == 1. The number is written by the claim, so a row that
+	// killed the process mid-delivery still counted and cannot loop forever at
+	// zero.
 	//
 	// It is here so PublishFunc can refuse a row whose count has gone absurd.
 	// That policy belongs to the caller; this package never gives up on a row.
-	Attempts int
+	Attempt int
 
 	// Topic is Message.Topic as written.
 	Topic string

@@ -9,7 +9,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
-// DB is a Postgres handle this package writes through: a *pgxpool.Pool, a
+// Execer is a Postgres handle this package writes through: a *pgxpool.Pool, a
 // *pgxpool.Conn or a pgx.Tx all satisfy it.
 //
 // The single method is the guarantee: with no Begin to call, this package
@@ -22,11 +22,11 @@ import (
 // that produced the business data and the outbox row commits with it; pass the
 // pool and the row commits on its own. Both are legitimate, the call site
 // decides, and rollback belongs to whoever opened the transaction.
-type DB interface {
+type Execer interface {
 	Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error)
 }
 
-// Inserter appends messages to one outbox table. It is the whole write side:
+// Producer appends messages to one outbox table. It is the whole write side:
 // build one per table when the process starts, keep it for the life of the
 // process, and hand it whichever handle is active at each call.
 //
@@ -34,28 +34,28 @@ type DB interface {
 // could not commit with the caller's transaction, which is the one thing the
 // outbox pattern is for.
 //
-// The zero value is not usable. NewInserter renders the statement, so an
-// Inserter nobody built carries none. Insert reports ErrInvalidConfig instead
+// The zero value is not usable. NewProducer renders the statement, so a
+// Producer nobody built carries none. Insert reports ErrInvalidConfig instead
 // of handing an empty statement to the driver, which panics.
-type Inserter struct {
+type Producer struct {
 	table string
 	sql   string
 }
 
-// NewInserter builds the write side for a table, "outbox" unless WithTable says
+// NewProducer builds the write side for a table, "outbox" unless WithTable says
 // otherwise.
 //
-// The name is validated here and never again: an Inserter that exists is one
+// The name is validated here and never again: a Producer that exists is one
 // whose statement is safe to run, so Insert can only fail for reasons that have
 // something to do with inserting. Build it where the error can be returned, in
 // a provider or a constructor or main, and not on the path that writes rows.
-func NewInserter(opts ...InsertOption) (*Inserter, error) {
-	cfg, err := buildInsertConfig(opts)
+func NewProducer(opts ...ProducerOption) (*Producer, error) {
+	cfg, err := buildProducerConfig(opts)
 	if err != nil {
 		return nil, err
 	}
 
-	return &Inserter{table: cfg.table, sql: insertSQL(cfg.table)}, nil
+	return &Producer{table: cfg.table, sql: insertSQL(cfg.table)}, nil
 }
 
 // Insert appends messages to the outbox through db, in one statement.
@@ -63,12 +63,12 @@ func NewInserter(opts ...InsertOption) (*Inserter, error) {
 // Whether the write is atomic with the caller's business data is decided by the
 // handle, not here: a transaction-bound one gives atomicity, a bare pool writes
 // on its own. Inserting nothing is not an error and touches no connection.
-func (i *Inserter) Insert(ctx context.Context, db DB, msgs ...Message) error {
-	// A zero-value Inserter carries no statement, and handing pgx an empty one
+func (p *Producer) Insert(ctx context.Context, db Execer, msgs ...Message) error {
+	// A zero-value Producer carries no statement, and handing pgx an empty one
 	// panics instead of failing. The type is exported so it can be held in a
 	// struct field, and an unset field is exactly how one arrives here.
-	if i.sql == "" {
-		return invalidConfig("inserter was not built by NewInserter")
+	if p.sql == "" {
+		return invalidConfig("producer was not built by NewProducer")
 	}
 
 	if len(msgs) == 0 {
@@ -76,7 +76,7 @@ func (i *Inserter) Insert(ctx context.Context, db DB, msgs ...Message) error {
 	}
 
 	if db == nil {
-		return invalidConfig("no database handle passed to Insert on %s", i.table)
+		return invalidConfig("no database handle passed to Insert on %s", p.table)
 	}
 
 	args, err := columnize(msgs)
@@ -84,10 +84,10 @@ func (i *Inserter) Insert(ctx context.Context, db DB, msgs ...Message) error {
 		return err
 	}
 
-	_, err = db.Exec(ctx, i.sql, args.topics, args.payloads, args.headers, args.delays)
+	_, err = db.Exec(ctx, p.sql, args.topics, args.payloads, args.headers, args.delays)
 	if err != nil {
 		return fmt.Errorf("outboxer: insert %d message(s) into %s: %w",
-			len(args.topics), i.table, asSchemaError(err))
+			len(args.topics), p.table, asSchemaError(err))
 	}
 
 	return nil

@@ -13,7 +13,7 @@ import (
 // It runs on a context detached from the relay's and bounded by the publish
 // timeout, so a shutdown cannot abandon a row mid-publish. Returning an error
 // is not fatal: RetryFunc defers the row and it is tried again.
-type PublishFunc func(ctx context.Context, msg Delivery) error
+type PublishFunc func(ctx context.Context, delivery Delivery) error
 
 // RetryFunc decides when a row that failed to publish becomes due again. That
 // is policy, and therefore the caller's; the default defers by one lease.
@@ -26,7 +26,7 @@ type PublishFunc func(ctx context.Context, msg Delivery) error
 // did store looks exactly like a failure from here, so a duplicate is possible
 // whatever this returns; capping every caller's policy to narrow a window that
 // idempotency already covers is the wrong trade.
-type RetryFunc func(msg Delivery, err error) time.Duration
+type RetryFunc func(delivery Delivery, err error) time.Duration
 
 // DialFunc opens the dedicated session the relay LISTENs on. It is called when
 // the relay needs that connection and again after the connection breaks, so it
@@ -104,13 +104,13 @@ const (
 	maxIdentifierLen = 63
 )
 
-// insertConfig is every inserter setting as one value.
-type insertConfig struct {
+// producerConfig is every producer setting as one value.
+type producerConfig struct {
 	table string
 }
 
-// sampleConfig is every sampler setting as one value.
-type sampleConfig struct {
+// samplerConfig is every sampler setting as one value.
+type samplerConfig struct {
 	table string
 }
 
@@ -135,15 +135,15 @@ type relayConfig struct {
 	stallAfter time.Duration
 }
 
-// InsertOption configures an Inserter. The interface is sealed, its method
+// ProducerOption configures a Producer. The interface is sealed, its method
 // unexported, so the only options that exist are the ones in this package and a
-// setting belonging to the relay cannot be handed to NewInserter at all.
+// setting belonging to the relay cannot be handed to NewProducer at all.
 //
 // That separation is why the two sides do not share one option type. A mistake
 // the compiler can refuse beats one a constructor has to report, and this
 // package will not silently ignore an option that does not apply.
-type InsertOption interface {
-	applyInsert(cfg *insertConfig) error
+type ProducerOption interface {
+	applyProducer(cfg *producerConfig) error
 }
 
 // RelayOption configures a Relay. Every one returns an error instead of
@@ -154,11 +154,11 @@ type RelayOption interface {
 	applyRelay(cfg *relayConfig) error
 }
 
-// SampleOption configures a Sampler. Sealed like the other two, and for the
+// SamplerOption configures a Sampler. Sealed like the other two, and for the
 // same reason: the reading side takes the table name and nothing else, so a
 // lease handed to NewSampler is a compile error and not a setting ignored.
-type SampleOption interface {
-	applySample(cfg *sampleConfig) error
+type SamplerOption interface {
+	applySampler(cfg *samplerConfig) error
 }
 
 // WithTable names the outbox table, on either side. It defaults to "outbox",
@@ -188,11 +188,11 @@ func WithTable(name string) TableOption {
 // an exported interface would read as "the option type of this package" and
 // invite `func myOptions() []outboxer.Option` — which compiles, and then does
 // not: interface slices are invariant, so []Option is assignable to none of
-// []InsertOption, []RelayOption or []SampleOption. A value built by hand
+// []ProducerOption, []RelayOption or []SamplerOption. A value built by hand
 // instead of through WithTable is still validated where it is applied.
 type TableOption string
 
-func (t TableOption) applyInsert(cfg *insertConfig) error {
+func (t TableOption) applyProducer(cfg *producerConfig) error {
 	err := validateTable(string(t))
 	if err != nil {
 		return err
@@ -214,7 +214,7 @@ func (t TableOption) applyRelay(cfg *relayConfig) error {
 	return nil
 }
 
-func (t TableOption) applySample(cfg *sampleConfig) error {
+func (t TableOption) applySampler(cfg *samplerConfig) error {
 	err := validateTable(string(t))
 	if err != nil {
 		return err
@@ -232,13 +232,14 @@ func (f relayOption) applyRelay(cfg *relayConfig) error {
 	return f(cfg)
 }
 
-// WithDialer turns on LISTEN/NOTIFY. Without it the relay polls, which is
-// correct everywhere and slower only where latency is measured in the tens of
-// milliseconds.
+// WithDialer turns on LISTEN/NOTIFY, opening the dedicated session it needs
+// through dial. Without it the relay polls, which is correct everywhere and
+// slower only where latency is measured in the tens of milliseconds.
 //
-// It is opt-in and not defaulted because a helper that dialled the pool's own
-// connection string would succeed behind a transaction-pooling pooler and then
-// deliver no notifications at all. That failure looks like working software.
+// It takes a dialer rather than a DSN, and is opt-in rather than defaulted, for
+// one and the same reason: a helper that dialled the pool's own connection
+// string would succeed behind a transaction-pooling pooler and then deliver no
+// notifications at all. That failure looks like working software.
 func WithDialer(dial DialFunc) RelayOption {
 	return relayOption(func(cfg *relayConfig) error {
 		if dial == nil {
@@ -402,18 +403,18 @@ func WithObserver(observer Observer) RelayOption {
 	})
 }
 
-// buildInsertConfig applies the options over the defaults.
-func buildInsertConfig(opts []InsertOption) (insertConfig, error) {
-	var empty insertConfig
+// buildProducerConfig applies the options over the defaults.
+func buildProducerConfig(opts []ProducerOption) (producerConfig, error) {
+	var empty producerConfig
 
-	cfg := insertConfig{table: defaultTable}
+	cfg := producerConfig{table: defaultTable}
 
 	for _, opt := range opts {
 		if opt == nil {
 			return empty, invalidConfig("nil option")
 		}
 
-		err := opt.applyInsert(&cfg)
+		err := opt.applyProducer(&cfg)
 		if err != nil {
 			return empty, err
 		}
@@ -422,18 +423,18 @@ func buildInsertConfig(opts []InsertOption) (insertConfig, error) {
 	return cfg, nil
 }
 
-// buildSampleConfig applies the options over the defaults.
-func buildSampleConfig(opts []SampleOption) (sampleConfig, error) {
-	var empty sampleConfig
+// buildSamplerConfig applies the options over the defaults.
+func buildSamplerConfig(opts []SamplerOption) (samplerConfig, error) {
+	var empty samplerConfig
 
-	cfg := sampleConfig{table: defaultTable}
+	cfg := samplerConfig{table: defaultTable}
 
 	for _, opt := range opts {
 		if opt == nil {
 			return empty, invalidConfig("nil option")
 		}
 
-		err := opt.applySample(&cfg)
+		err := opt.applySampler(&cfg)
 		if err != nil {
 			return empty, err
 		}

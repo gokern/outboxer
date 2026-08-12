@@ -9,7 +9,7 @@
 //
 // # The two sides
 //
-// [NewInserter] builds the write side. [Inserter.Insert] takes the Postgres
+// [NewProducer] builds the write side. [Producer.Insert] takes the Postgres
 // handle per call: pass a transaction-bound handle and the write is atomic with
 // the business data, pass the pool and the row commits on its own. Both are
 // legitimate, and the call site decides.
@@ -20,7 +20,7 @@
 // workers and replicas are safe but unordered.
 //
 // [NewSampler] builds a third thing that is neither: a reading of the table
-// itself. [Sampler.Sample] reports how much is undelivered, how much is overdue,
+// itself. [Sampler.Stats] reports how much is undelivered, how much is overdue,
 // how old the oldest unpublished fact is and the worst attempt count among them.
 // It is separate from the relay because that reading is wanted precisely when
 // no relay is running: a crashed process reports nothing.
@@ -28,15 +28,15 @@
 // All three name their table through [WithTable], which defaults to "outbox".
 // That name is the one fact they have to agree on, so it is also the one option
 // every constructor accepts. Every other setting belongs to the relay, and the
-// compiler refuses it on [NewInserter] and [NewSampler] alike.
+// compiler refuses it on [NewProducer] and [NewSampler] alike.
 //
 // # What this package does not own
 //
 // It never opens a transaction. Every statement it issues is a single
-// statement, so atomicity is whatever the handle passed to [Inserter.Insert]
+// statement, so atomicity is whatever the handle passed to [Producer.Insert]
 // provides, and rollback belongs to whoever opened the transaction.
 //
-// On the write side the type system enforces that: [DB] has one method, and no
+// On the write side the type system enforces that: [Execer] has one method, and no
 // Begin to call. On the read side it is discipline, not type. The relay holds a
 // *pgxpool.Pool, which has Begin and everything else. The discipline holds
 // because a relay operation needing two statements would need a transaction,

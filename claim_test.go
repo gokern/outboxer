@@ -204,8 +204,8 @@ func Test_ExecMode(t *testing.T) {
 		// failing publish bring the prune and the deferral in, which were the
 		// two the claim never covered.
 		failedOnce := &atomic.Int64{}
-		published := newCollector(func(msg outboxer.Delivery) error {
-			if msg.Topic == "deferred" && failedOnce.Add(1) == 1 {
+		published := newCollector(func(delivery outboxer.Delivery) error {
+			if delivery.Topic == "deferred" && failedOnce.Add(1) == 1 {
 				return assert.AnError
 			}
 
@@ -261,8 +261,8 @@ func Test_ExecMode(t *testing.T) {
 		require.NoError(t, stop())
 
 		byTopic := map[string]outboxer.Delivery{}
-		for _, msg := range published.all() {
-			byTopic[msg.Topic] = msg
+		for _, delivery := range published.all() {
+			byTopic[delivery.Topic] = delivery
 		}
 
 		require.Equal(t, []byte{0x00, 0x01, 0xff}, byTopic["single"].Payload)

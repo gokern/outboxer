@@ -28,7 +28,7 @@ func TestErrors_NameThePackageExactlyOnce(t *testing.T) {
 	t.Run("a config refusal", func(t *testing.T) {
 		t.Parallel()
 
-		_, err := outboxer.NewInserter(outboxer.WithTable("not a name"))
+		_, err := outboxer.NewProducer(outboxer.WithTable("not a name"))
 		require.ErrorIs(t, err, outboxer.ErrInvalidConfig)
 		prefixOnce(t, err)
 	})
@@ -75,7 +75,7 @@ func TestErrors_NameThePackageExactlyOnce(t *testing.T) {
 	})
 
 	// The one boundary with no wrap site of its own: a panicked publish becomes
-	// the publish error itself and travels to RetryFunc and Observer.Publish as
+	// the publish error itself and travels to RetryFunc and Observer.Published as
 	// a value, so the prefix has to be put on where the panic is contained.
 	t.Run("a panicked publish reaching the caller's callbacks", func(t *testing.T) {
 		t.Parallel()
@@ -88,7 +88,7 @@ func TestErrors_NameThePackageExactlyOnce(t *testing.T) {
 				outboxer.WithTable(table),
 				outboxer.WithPollInterval(pollNever),
 				outboxer.WithObserver(outboxer.Observer{
-					Publish: func(_ context.Context, _ outboxer.Delivery, err error) {
+					Published: func(_ context.Context, _ outboxer.Delivery, err error) {
 						select {
 						case failures <- err:
 						default:
@@ -101,7 +101,7 @@ func TestErrors_NameThePackageExactlyOnce(t *testing.T) {
 
 			stop := relayRun(t, relay)
 
-			reported := awaited(t, failures, "the panic never reached Observer.Publish")
+			reported := awaited(t, failures, "the panic never reached Observer.Published")
 			require.ErrorIs(t, reported, outboxer.ErrPublishPanicked)
 			prefixOnce(t, reported)
 

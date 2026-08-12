@@ -10,24 +10,24 @@ import (
 // report is worth. Every field is optional; a nil one is simply not called.
 //
 // All of them run on the relay's own goroutines, so a slow observer slows the
-// relay down. Hand work off rather than blocking in one. Publish in particular
+// relay down. Hand work off rather than blocking in one. Published in particular
 // runs inside the delivery and holds its publish slot until it returns, so an
 // observer that blocks there does not merely slow the relay: with every slot
 // held it is indistinguishable from a wedged PublishFunc and will trip
 // ErrPublishStalled.
 //
-// They also run concurrently. Publish in particular is called from every
+// They also run concurrently. Published in particular is called from every
 // publisher goroutine, so up to WithMaxConcurrency of them at once, and Warned
 // is reached from the dispatcher, from publishers and from Run itself. A
 // callback that touches state of its own needs its own synchronisation. The
-// obvious counter incremented in Publish is a data race.
+// obvious counter incremented in Published is a data race.
 //
 // A callback that panics is contained, not fatal. It runs beside deliveries in
 // flight, and letting the process die would abandon all of them; the doc for
 // ErrCallbackPanicked has the full cost. The panic becomes an advisory and is
 // reported through Warned.
 type Observer struct {
-	// Publish is called after every publish attempt, successful or not. On
+	// Published is called after every publish attempt, successful or not. On
 	// failure the row has already been deferred by the time this runs, so a
 	// slow observer cannot sit between a failure and the recording of its
 	// consequence.
@@ -41,7 +41,7 @@ type Observer struct {
 	// travel, so a tracer's baggage survives the async hop, but shutdown does
 	// not cancel it — an attempt that is finishing during shutdown still gets
 	// its report.
-	Publish func(ctx context.Context, msg Delivery, err error)
+	Published func(ctx context.Context, delivery Delivery, err error)
 
 	// Woke is called every time the relay stops waiting, whatever woke it: a
 	// notification, the poll tick, a deferral coming due, or the run ending. It
@@ -83,12 +83,12 @@ type Observer struct {
 // them has to remember that a field may be nil, or that the field is the
 // caller's code and free to panic.
 
-func (r *Relay) observePublish(ctx context.Context, msg Delivery, err error) {
-	if r.cfg.observer.Publish == nil {
+func (r *Relay) observePublish(ctx context.Context, delivery Delivery, err error) {
+	if r.cfg.observer.Published == nil {
 		return
 	}
 
-	r.notePanic("Publish", guard(ErrCallbackPanicked, func() { r.cfg.observer.Publish(ctx, msg, err) }))
+	r.notePanic("Published", guard(ErrCallbackPanicked, func() { r.cfg.observer.Published(ctx, delivery, err) }))
 }
 
 func (r *Relay) observeWoke() {

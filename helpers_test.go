@@ -133,13 +133,13 @@ func dueNow() outboxer.Message {
 // insertInto appends messages to table through the package's own write side, so
 // a test that arranges rows runs the same statement production does. It returns
 // the error instead of asserting on it, because some callers want one.
-func insertInto(t *testing.T, db outboxer.DB, table string, msgs ...outboxer.Message) error {
+func insertInto(t *testing.T, db outboxer.Execer, table string, msgs ...outboxer.Message) error {
 	t.Helper()
 
-	inserter, err := outboxer.NewInserter(outboxer.WithTable(table))
+	producer, err := outboxer.NewProducer(outboxer.WithTable(table))
 	require.NoError(t, err)
 
-	return inserter.Insert(t.Context(), db, msgs...)
+	return producer.Insert(t.Context(), db, msgs...)
 }
 
 // explainPlan returns the query plan as one string. EXPLAIN without ANALYZE
@@ -298,24 +298,24 @@ func runUntilItStops(t *testing.T, relay *outboxer.Relay) error {
 type collector struct {
 	mu        sync.Mutex
 	delivered []outboxer.Delivery
-	publish   func(msg outboxer.Delivery) error
+	publish   func(delivery outboxer.Delivery) error
 }
 
-func newCollector(publish func(msg outboxer.Delivery) error) *collector {
+func newCollector(publish func(delivery outboxer.Delivery) error) *collector {
 	return &collector{mu: sync.Mutex{}, delivered: nil, publish: publish}
 }
 
-func (c *collector) Publish(_ context.Context, msg outboxer.Delivery) error {
+func (c *collector) Publish(_ context.Context, delivery outboxer.Delivery) error {
 	var err error
 	if c.publish != nil {
-		err = c.publish(msg)
+		err = c.publish(delivery)
 	}
 
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
 	if err == nil {
-		c.delivered = append(c.delivered, msg)
+		c.delivered = append(c.delivered, delivery)
 	}
 
 	return err
@@ -342,8 +342,8 @@ func (c *collector) ids() []int64 {
 	delivered := c.all()
 
 	ids := make([]int64, 0, len(delivered))
-	for _, msg := range delivered {
-		ids = append(ids, msg.ID)
+	for _, delivery := range delivered {
+		ids = append(ids, delivery.ID)
 	}
 
 	return ids

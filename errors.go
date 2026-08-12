@@ -15,10 +15,10 @@ var (
 	// refuses rather than clamping or ignoring, so a declared value and the
 	// effective one can never silently differ.
 	//
-	// Every option returns it, and so do NewInserter and NewRelay. It also
+	// Every option returns it, and so do NewProducer and NewRelay. It also
 	// reaches the caller on three paths that are not settings but are the same
-	// mistake, a value nobody configured: Inserter.Insert on a zero-value
-	// inserter or a nil handle, Run on a zero-value relay, and Run again when a
+	// mistake, a value nobody configured: Producer.Insert on a zero-value
+	// producer or a nil handle, Run on a zero-value relay, and Run again when a
 	// DialFunc returns a nil connection and a nil error. Check for it on the
 	// insert path too. Read as "storage failure" and retried, a nil handle
 	// retries forever.
@@ -71,7 +71,7 @@ var (
 	// It is exported because it is the one publish failure that deserves a
 	// policy of its own: a row that panics will very likely panic again, and
 	// RetryFunc is where a caller says what to do about that. It arrives there,
-	// and at Observer.Publish, wrapped together with the panic value and the
+	// and at Observer.Published, wrapped together with the panic value and the
 	// stack it came from.
 	ErrPublishPanicked = errors.New("publish function panicked")
 

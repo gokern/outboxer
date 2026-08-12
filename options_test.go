@@ -17,7 +17,7 @@ import (
 // of it.
 //
 // The sealed option interfaces carry the other half of the guarantee, and that
-// half is untestable by construction: a relay setting handed to NewInserter is
+// half is untestable by construction: a relay setting handed to NewProducer is
 // a compile error, so there is no run-time case to write.
 
 // Every option refuses a bad value instead of ignoring it. That is the whole
@@ -160,16 +160,16 @@ func TestNewRelay(t *testing.T) {
 // The sealed option interfaces are what make a relay setting a compile error on
 // the write side instead of a silent no-op. What can still be checked at run
 // time is the other half of the promise: a bad value is refused, never clamped.
-func TestNewInserter(t *testing.T) {
+func TestNewProducer(t *testing.T) {
 	t.Parallel()
 
-	_, err := outboxer.NewInserter(outboxer.WithTable("Bad Name"))
+	_, err := outboxer.NewProducer(outboxer.WithTable("Bad Name"))
 	require.ErrorIs(t, err, outboxer.ErrInvalidConfig)
 
-	_, err = outboxer.NewInserter(nil)
+	_, err = outboxer.NewProducer(nil)
 	require.ErrorIs(t, err, outboxer.ErrInvalidConfig)
 
-	inserter, err := outboxer.NewInserter()
+	producer, err := outboxer.NewProducer()
 	require.NoError(t, err, "no options means the reference table")
-	require.NotNil(t, inserter)
+	require.NotNil(t, producer)
 }

@@ -31,7 +31,7 @@ import (
 
 // The write side: the outbox row and the business data commit together, because
 // they go through the same handle.
-func ExampleInserter_Insert() {
+func ExampleProducer_Insert() {
 	var (
 		ctx  context.Context
 		pool *pgxpool.Pool
@@ -39,7 +39,7 @@ func ExampleInserter_Insert() {
 
 	// Built once, where an error can still be returned. After this the name is
 	// known good, so Insert can only fail for reasons to do with inserting.
-	inserter, err := outboxer.NewInserter()
+	producer, err := outboxer.NewProducer()
 	if err != nil {
 		return
 	}
@@ -57,7 +57,7 @@ func ExampleInserter_Insert() {
 
 	// The transaction, not the pool: that is what makes the row and the user
 	// commit together or not at all.
-	err = inserter.Insert(ctx, tx, outboxer.Message{
+	err = producer.Insert(ctx, tx, outboxer.Message{
 		Topic:   "user.created",
 		Payload: []byte(`{"email":"a@example.com"}`),
 	})
@@ -71,10 +71,10 @@ func ExampleInserter_Insert() {
 // A differently-named table, and a handle resolved per call: the shape a
 // transaction manager produces, where the active transaction lives on the
 // context and the pool is the fallback outside one.
-func ExampleNewInserter() {
+func ExampleNewProducer() {
 	var pool *pgxpool.Pool
 
-	inserter, err := outboxer.NewInserter(outboxer.WithTable("events"))
+	producer, err := outboxer.NewProducer(outboxer.WithTable("events"))
 	if err != nil {
 		return
 	}
@@ -86,7 +86,7 @@ func ExampleNewInserter() {
 	// process, so any other package storing "tx" would silently collide here.
 	type txKey struct{}
 
-	handle := func(ctx context.Context) outboxer.DB {
+	handle := func(ctx context.Context) outboxer.Execer {
 		if tx, ok := ctx.Value(txKey{}).(pgx.Tx); ok {
 			return tx
 		}
@@ -96,7 +96,7 @@ func ExampleNewInserter() {
 
 	ctx := context.Background()
 
-	_ = inserter.Insert(ctx, handle(ctx), outboxer.Message{
+	_ = producer.Insert(ctx, handle(ctx), outboxer.Message{
 		Topic:   "invoice.expired",
 		Payload: []byte(`{"id":42}`),
 	})
@@ -109,7 +109,7 @@ func ExampleNewRelay() {
 		ctx     context.Context
 		pool    *pgxpool.Pool
 		dsn     string
-		publish func(ctx context.Context, msg outboxer.Delivery) error
+		publish func(ctx context.Context, delivery outboxer.Delivery) error
 	)
 
 	relay, err := outboxer.NewRelay(pool, publish,
@@ -127,14 +127,14 @@ func ExampleNewRelay() {
 		outboxer.WithPublishTimeout(5*time.Second),
 		outboxer.WithPollInterval(10*time.Second),
 		outboxer.WithRetention(7*24*time.Hour),
-		outboxer.WithRetry(func(msg outboxer.Delivery, _ error) time.Duration {
-			return min(time.Duration(msg.Attempts)*time.Second, time.Minute)
+		outboxer.WithRetry(func(delivery outboxer.Delivery, _ error) time.Duration {
+			return min(time.Duration(delivery.Attempt)*time.Second, time.Minute)
 		}),
 		outboxer.WithObserver(outboxer.Observer{
-			Publish: func(_ context.Context, msg outboxer.Delivery, err error) {
+			Published: func(_ context.Context, delivery outboxer.Delivery, err error) {
 				if err != nil {
 					slog.Warn("outbox publish failed, row stays deferred",
-						"topic", msg.Topic, "id", msg.ID, "attempts", msg.Attempts, "err", err)
+						"topic", delivery.Topic, "id", delivery.ID, "attempt", delivery.Attempt, "err", err)
 				}
 			},
 			ListenerChanged: func(err error) {
@@ -173,7 +173,7 @@ func ExampleNewRelay() {
 func ExampleRelay_Run() {
 	var (
 		pool    *pgxpool.Pool
-		publish func(ctx context.Context, msg outboxer.Delivery) error
+		publish func(ctx context.Context, delivery outboxer.Delivery) error
 	)
 
 	// The context your process shuts down on: cancelling it is what makes this
@@ -217,7 +217,7 @@ func ExampleRelay_Run() {
 	}
 }
 
-// The reading that outlives the relay: built once beside the inserter, called
+// The reading that outlives the relay: built once beside the producer, called
 // on a timer by whatever exports your metrics. Nothing here starts a goroutine,
 // so the cadence and the timeout belong to the caller.
 func ExampleNewSampler() {
@@ -231,7 +231,7 @@ func ExampleNewSampler() {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	stats, err := sampler.Sample(ctx)
+	stats, err := sampler.Stats(ctx)
 	if err != nil {
 		slog.Error("outbox unreadable", "err", err)
 
@@ -243,10 +243,10 @@ func ExampleNewSampler() {
 
 	// Due says nothing is claiming. A broker outage hides from it instead: the
 	// relay keeps claiming and deferring, so Due stays near zero while
-	// MaxAttempts climbs.
+	// PeakAttempts climbs.
 	slog.Info("outbox",
 		"pending", stats.Pending,
 		"due", stats.Due,
 		"oldest_age_seconds", stats.OldestAge.Seconds(),
-		"max_attempts", stats.MaxAttempts)
+		"peak_attempts", stats.PeakAttempts)
 }

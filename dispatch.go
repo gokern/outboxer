@@ -62,7 +62,7 @@ func (r *Relay) dispatch(ctx context.Context) error {
 // context (a broker SDK with no deadline support, a bare channel receive, a
 // mutex) does not return, and nothing in Go can make it. Every slot stays
 // taken and the relay emits nothing — Woke needs the wait loop it never
-// reaches, Publish needs an attempt that never finishes — so a wedged relay
+// reaches, Published needs an attempt that never finishes — so a wedged relay
 // looks exactly like an idle one. Stopping lets a supervisor restart the
 // process, and only a restart recovers.
 //
@@ -139,23 +139,23 @@ func (r *Relay) claim(ctx context.Context, limit int) ([]Delivery, int, error) {
 		seen++
 
 		var (
-			msg Delivery
-			raw []byte
+			delivery Delivery
+			raw      []byte
 		)
 
-		err = rows.Scan(&msg.ID, &msg.Attempts, &msg.Topic, &msg.Payload, &raw, &msg.CreatedAt)
+		err = rows.Scan(&delivery.ID, &delivery.Attempt, &delivery.Topic, &delivery.Payload, &raw, &delivery.CreatedAt)
 		if err != nil {
 			return nil, seen, fmt.Errorf("scan claimed row: %w", asSchemaError(err))
 		}
 
-		msg.Headers, err = decodeHeaders(raw)
+		delivery.Headers, err = decodeHeaders(raw)
 		if err != nil {
-			r.observeWarn(fmt.Errorf("outboxer: %s id=%d: %w", r.cfg.table, msg.ID, err))
+			r.observeWarn(fmt.Errorf("outboxer: %s id=%d: %w", r.cfg.table, delivery.ID, err))
 
 			continue
 		}
 
-		claimed = append(claimed, msg)
+		claimed = append(claimed, delivery)
 	}
 
 	err = rows.Err()
@@ -167,7 +167,7 @@ func (r *Relay) claim(ctx context.Context, limit int) ([]Delivery, int, error) {
 }
 
 // deliverRow runs one delivery and gives the slot back.
-func (r *Relay) deliverRow(ctx context.Context, msg Delivery) {
+func (r *Relay) deliverRow(ctx context.Context, delivery Delivery) {
 	defer func() {
 		r.active.Add(-1)
 
@@ -177,7 +177,7 @@ func (r *Relay) deliverRow(ctx context.Context, msg Delivery) {
 		}
 	}()
 
-	r.deliver(ctx, msg)
+	r.deliver(ctx, delivery)
 }
 
 // deliver publishes one row and records the outcome.
@@ -194,10 +194,10 @@ func (r *Relay) deliverRow(ctx context.Context, msg Delivery) {
 // observer is told: every row published during that observer's call would be
 // another row the database does not know about, which is the exact thing
 // stopping exists to bound.
-func (r *Relay) deliver(ctx context.Context, msg Delivery) {
-	err := r.publishOnce(ctx, msg)
+func (r *Relay) deliver(ctx context.Context, delivery Delivery) {
+	err := r.publishOnce(ctx, delivery)
 	if err != nil {
-		r.deferRow(ctx, msg, err)
+		r.deferRow(ctx, delivery, err)
 
 		return
 	}
@@ -205,17 +205,17 @@ func (r *Relay) deliver(ctx context.Context, msg Delivery) {
 	markCtx, cancelMark := context.WithTimeout(context.WithoutCancel(ctx), markTimeout)
 	defer cancelMark()
 
-	_, markErr := r.pool.Exec(markCtx, r.stmt.mark, msg.ID)
+	_, markErr := r.pool.Exec(markCtx, r.stmt.mark, delivery.ID)
 	if markErr != nil {
 		// The row was published and the database does not know it. It becomes
 		// due again at lease expiry, so the duplicate is already guaranteed;
 		// the only thing left to control is that it is one duplicate and not a
 		// stream of them, which means stopping.
 		r.setFatal(fmt.Errorf("outboxer: mark published in %s (id=%d): %w",
-			r.cfg.table, msg.ID, asSchemaError(markErr)))
+			r.cfg.table, delivery.ID, asSchemaError(markErr)))
 	}
 
-	r.observePublish(context.WithoutCancel(ctx), msg, nil)
+	r.observePublish(context.WithoutCancel(ctx), delivery, nil)
 }
 
 // publishOnce runs the caller's publish function under its own timeout and
@@ -225,17 +225,17 @@ func (r *Relay) deliver(ctx context.Context, msg Delivery) {
 // ErrCallbackPanicked has the arithmetic. This one differs from the rest only
 // in where the panic goes: it is the outcome of the delivery, so it becomes
 // the publish error itself rather than an advisory alongside it. It is
-// wrapped here because it travels to RetryFunc and Observer.Publish directly,
+// wrapped here because it travels to RetryFunc and Observer.Published directly,
 // with no boundary wrap of its own to name the package and the row.
-func (r *Relay) publishOnce(ctx context.Context, msg Delivery) error {
+func (r *Relay) publishOnce(ctx context.Context, delivery Delivery) error {
 	pubCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), r.cfg.publishTimeout)
 	defer cancel()
 
 	var publishErr error
 
-	panicked := guard(ErrPublishPanicked, func() { publishErr = r.publish(pubCtx, msg) })
+	panicked := guard(ErrPublishPanicked, func() { publishErr = r.publish(pubCtx, delivery) })
 	if panicked != nil {
-		return fmt.Errorf("outboxer: %s id=%d: %w", r.cfg.table, msg.ID, panicked)
+		return fmt.Errorf("outboxer: %s id=%d: %w", r.cfg.table, delivery.ID, panicked)
 	}
 
 	return publishErr

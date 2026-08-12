@@ -60,10 +60,10 @@ func Test_Pooler(t *testing.T) {
 			fixture := newPoolerFixture(t, tc.table, tc.configure)
 
 			failedOnce := &atomic.Int64{}
-			published := newCollector(func(msg outboxer.Delivery) error {
+			published := newCollector(func(delivery outboxer.Delivery) error {
 				// One failure, so the deferral write goes through the pooler
 				// too, and not only the happy path.
-				if msg.Topic == "retry" && failedOnce.Add(1) == 1 {
+				if delivery.Topic == "retry" && failedOnce.Add(1) == 1 {
 					return assert.AnError
 				}
 
@@ -85,7 +85,7 @@ func Test_Pooler(t *testing.T) {
 			sampler, err := outboxer.NewSampler(fixture.pooled, outboxer.WithTable(fixture.table))
 			require.NoError(t, err)
 
-			backlog, err := sampler.Sample(t.Context())
+			backlog, err := sampler.Stats(t.Context())
 			require.NoError(t, err)
 			require.Equal(t, int64(2), backlog.Pending, "both rows are pending, read through the pooler")
 

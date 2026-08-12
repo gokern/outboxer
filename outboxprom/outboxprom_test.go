@@ -30,14 +30,14 @@ func Test_ObserverFeedsTheCollectors(t *testing.T) {
 
 	reg := prometheus.NewPedanticRegistry()
 
-	metrics, err := outboxprom.New()
+	metrics, err := outboxprom.NewMetrics()
 	require.NoError(t, err)
 	require.NoError(t, reg.Register(metrics))
 
 	observer := metrics.Observer()
 
-	observer.Publish(t.Context(), delivery("orders", 1), nil)
-	observer.Publish(t.Context(), delivery("orders", 3), errors.New("broker refused"))
+	observer.Published(t.Context(), delivery("orders", 1), nil)
+	observer.Published(t.Context(), delivery("orders", 3), errors.New("broker refused"))
 
 	observer.ListenerChanged(errors.New("connection lost"))
 	observer.ListenerChanged(nil)
@@ -95,7 +95,7 @@ func Test_WarningKindsMatchWhatOutboxerSends(t *testing.T) {
 
 	reg := prometheus.NewPedanticRegistry()
 
-	metrics, err := outboxprom.New()
+	metrics, err := outboxprom.NewMetrics()
 	require.NoError(t, err)
 	require.NoError(t, reg.Register(metrics))
 
@@ -150,14 +150,14 @@ func Test_ObservationSemantics(t *testing.T) {
 
 		reg := prometheus.NewPedanticRegistry()
 
-		metrics, err := outboxprom.New()
+		metrics, err := outboxprom.NewMetrics()
 		require.NoError(t, err)
 		require.NoError(t, reg.Register(metrics))
 
 		observer := metrics.Observer()
-		observer.Publish(t.Context(), delivery("orders", 1), nil)
-		observer.Publish(t.Context(), delivery("orders", 2), errors.New("broker refused"))
-		observer.Publish(t.Context(), delivery("orders", 3), errors.New("broker refused"))
+		observer.Published(t.Context(), delivery("orders", 1), nil)
+		observer.Published(t.Context(), delivery("orders", 2), errors.New("broker refused"))
+		observer.Published(t.Context(), delivery("orders", 3), errors.New("broker refused"))
 
 		require.Equal(t, uint64(1), histogramCount(t, reg, "outbox_publish_lag_seconds"),
 			"only the delivered message has a lag to report")
@@ -176,7 +176,7 @@ func Test_ObservationSemantics(t *testing.T) {
 
 		reg := prometheus.NewPedanticRegistry()
 
-		metrics, err := outboxprom.New()
+		metrics, err := outboxprom.NewMetrics()
 		require.NoError(t, err)
 		require.NoError(t, reg.Register(metrics))
 
@@ -223,13 +223,13 @@ outbox_due_rows 7
 # HELP outbox_oldest_age_seconds Age of the oldest undelivered row, on the database clock.
 # TYPE outbox_oldest_age_seconds gauge
 outbox_oldest_age_seconds 93.5
-# HELP outbox_max_attempts Highest attempt count among undelivered rows.
-# TYPE outbox_max_attempts gauge
-outbox_max_attempts 4
+# HELP outbox_peak_attempts Highest attempt count among undelivered rows.
+# TYPE outbox_peak_attempts gauge
+outbox_peak_attempts 4
 `)
 
 	require.NoError(t, testutil.GatherAndCompare(reg, expected,
-		"outbox_pending_rows", "outbox_due_rows", "outbox_oldest_age_seconds", "outbox_max_attempts"))
+		"outbox_pending_rows", "outbox_due_rows", "outbox_oldest_age_seconds", "outbox_peak_attempts"))
 }
 
 // A scrape that cannot read the table reports no backlog at all, rather than a
@@ -338,11 +338,11 @@ func Test_Options(t *testing.T) {
 
 		reg := prometheus.NewPedanticRegistry()
 
-		metrics, err := outboxprom.New(outboxprom.WithoutTopicLabel())
+		metrics, err := outboxprom.NewMetrics(outboxprom.WithoutTopicLabel())
 		require.NoError(t, err)
 		require.NoError(t, reg.Register(metrics))
 
-		metrics.Observer().Publish(t.Context(), delivery("tenant-9931-orders", 1), nil)
+		metrics.Observer().Published(t.Context(), delivery("tenant-9931-orders", 1), nil)
 
 		expected := strings.NewReader(`
 # HELP outbox_publish_total Publish attempts, by topic and outcome.
@@ -357,7 +357,7 @@ outbox_publish_total{result="ok"} 1
 
 		reg := prometheus.NewPedanticRegistry()
 
-		metrics, err := outboxprom.New(
+		metrics, err := outboxprom.NewMetrics(
 			outboxprom.WithNamespace("billing"),
 			outboxprom.WithConstLabels(prometheus.Labels{"shard": "eu1"}))
 		require.NoError(t, err)
@@ -435,7 +435,7 @@ outbox_pending_rows{table="outbox"} 1
 
 		reg := prometheus.NewPedanticRegistry()
 
-		metrics, err := outboxprom.New(outboxprom.WithLagBuckets([]float64{1, 10}))
+		metrics, err := outboxprom.NewMetrics(outboxprom.WithLagBuckets([]float64{1, 10}))
 		require.NoError(t, err)
 		require.NoError(t, reg.Register(metrics))
 
@@ -452,7 +452,7 @@ func Test_Refusals(t *testing.T) {
 	t.Run("refuses a namespace Prometheus would reject", func(t *testing.T) {
 		t.Parallel()
 
-		_, err := outboxprom.New(outboxprom.WithNamespace("not a name"))
+		_, err := outboxprom.NewMetrics(outboxprom.WithNamespace("not a name"))
 		require.Error(t, err)
 	})
 
@@ -473,7 +473,7 @@ func Test_Refusals(t *testing.T) {
 		}
 
 		for name, buckets := range cases {
-			_, err := outboxprom.New(outboxprom.WithLagBuckets(buckets))
+			_, err := outboxprom.NewMetrics(outboxprom.WithLagBuckets(buckets))
 			require.ErrorIsf(t, err, outboxer.ErrInvalidConfig, "%s boundaries must be refused", name)
 		}
 	})
@@ -487,7 +487,7 @@ func Test_Refusals(t *testing.T) {
 		t.Parallel()
 
 		for _, name := range []string{"topic", "result", "kind"} {
-			_, err := outboxprom.New(outboxprom.WithConstLabels(prometheus.Labels{name: "x"}))
+			_, err := outboxprom.NewMetrics(outboxprom.WithConstLabels(prometheus.Labels{name: "x"}))
 			require.ErrorIs(t, err, outboxer.ErrInvalidConfig, "constant label %q collides", name)
 			require.Contains(t, err.Error(), name)
 		}
@@ -496,7 +496,7 @@ func Test_Refusals(t *testing.T) {
 	t.Run("refuses a constant label Prometheus reserves", func(t *testing.T) {
 		t.Parallel()
 
-		_, err := outboxprom.New(outboxprom.WithConstLabels(prometheus.Labels{"__reserved": "x"}))
+		_, err := outboxprom.NewMetrics(outboxprom.WithConstLabels(prometheus.Labels{"__reserved": "x"}))
 		require.ErrorIs(t, err, outboxer.ErrInvalidConfig, "the __ prefix is reserved for Prometheus itself")
 	})
 
@@ -528,7 +528,7 @@ func Test_Refusals(t *testing.T) {
 	t.Run("refuses an option belonging to the other constructor", func(t *testing.T) {
 		t.Parallel()
 
-		_, err := outboxprom.New(outboxprom.WithSampleTimeout(time.Second))
+		_, err := outboxprom.NewMetrics(outboxprom.WithSampleTimeout(time.Second))
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "WithSampleTimeout", "the error has to name the option")
 
@@ -546,7 +546,7 @@ func Test_Refusals(t *testing.T) {
 	t.Run("refuses a zero-value option", func(t *testing.T) {
 		t.Parallel()
 
-		_, err := outboxprom.New(outboxprom.Option{})
+		_, err := outboxprom.NewMetrics(outboxprom.Option{})
 		require.Error(t, err)
 	})
 
@@ -568,7 +568,7 @@ func Test_MetricNamesFollowTheConventions(t *testing.T) {
 
 	reg := prometheus.NewPedanticRegistry()
 
-	metrics, err := outboxprom.New()
+	metrics, err := outboxprom.NewMetrics()
 	require.NoError(t, err)
 	require.NoError(t, reg.Register(metrics))
 
@@ -588,7 +588,7 @@ func Test_MetricNamesFollowTheConventions(t *testing.T) {
 
 func delivery(topic string, attempts int) outboxer.Delivery {
 	return outboxer.Delivery{
-		ID: 1, Attempts: attempts, Topic: topic, Headers: nil,
+		ID: 1, Attempt: attempts, Topic: topic, Headers: nil,
 		Payload: []byte("p"), CreatedAt: time.Now(),
 	}
 }

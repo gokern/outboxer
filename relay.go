@@ -65,8 +65,8 @@ type Relay struct {
 // the table WithTable names — "outbox" unless it says otherwise.
 //
 // The pool is a concrete *pgxpool.Pool and not an interface. That is the one
-// asymmetry with the write side, and it is deliberate. Inserter.Insert takes a
-// DB because that write has to be able to go through the caller's transaction.
+// asymmetry with the write side, and it is deliberate. Producer.Insert takes an
+// Execer because that write has to be able to go through the caller's transaction.
 // Nothing the relay does belongs in the caller's transaction, and the relay
 // reads and writes from every publisher goroutine at once. An interface narrow
 // enough to be useful here would also be satisfied by *pgx.Conn, which is not

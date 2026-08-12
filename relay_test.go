@@ -52,19 +52,19 @@ func TestRelay_Run(t *testing.T) {
 			eventually(t, "the row is delivered", func() bool { return published.count() == 1 })
 			require.NoError(t, stop())
 
-			msg := published.all()[0]
-			require.Equal(t, "user.created", msg.Topic)
-			require.Equal(t, []byte(`{"id":1}`), msg.Payload)
-			require.Equal(t, map[string]string{"traceparent": "00-abc-def-01"}, msg.Headers)
-			require.Equal(t, 1, msg.Attempts, "a first delivery is attempt one, not zero")
+			delivery := published.all()[0]
+			require.Equal(t, "user.created", delivery.Topic)
+			require.Equal(t, []byte(`{"id":1}`), delivery.Payload)
+			require.Equal(t, map[string]string{"traceparent": "00-abc-def-01"}, delivery.Headers)
+			require.Equal(t, 1, delivery.Attempt, "a first delivery is attempt one, not zero")
 			var dbNow time.Time
 
 			require.NoError(t, pool.QueryRow(t.Context(), `SELECT clock_timestamp()`).Scan(&dbNow))
-			require.WithinDuration(t, dbNow, msg.CreatedAt, time.Minute,
+			require.WithinDuration(t, dbNow, delivery.CreatedAt, time.Minute,
 				"the age is on the database clock, measured against that clock, since "+
 					"a client-side time.Now() would pass just as well for a producer header")
 
-			require.NotNil(t, readRow(t, pool, table, msg.ID).publishedAt)
+			require.NotNil(t, readRow(t, pool, table, delivery.ID).publishedAt)
 		})
 	})
 
@@ -439,7 +439,7 @@ func Test_Shutdown(t *testing.T) {
 	// A PublishFunc that ignores its context never returns, so its slot never
 	// frees and the relay publishes nothing for the rest of the process. Nothing
 	// can force it back, and the silence is what makes it unfindable: Woke needs
-	// the wait loop the dispatcher never reaches, and Publish needs an attempt that
+	// the wait loop the dispatcher never reaches, and Published needs an attempt that
 	// never finishes. So the relay stops itself and says why. Only a restart of
 	// the process recovers, and only the caller can do that.
 	t.Run("a stalled publisher stops the relay", func(t *testing.T) {

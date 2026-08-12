@@ -58,13 +58,13 @@ func Test_RetryPolicy(t *testing.T) {
 				outboxer.WithTable(table),
 				outboxer.WithPollInterval(pollNever),
 				outboxer.WithObserver(outboxer.Observer{Warned: warned.observe}),
-				outboxer.WithRetry(func(msg outboxer.Delivery, cause error) time.Duration {
+				outboxer.WithRetry(func(delivery outboxer.Delivery, cause error) time.Duration {
 					// The shape this package advertises in its own example: a
 					// backoff computed from the attempt count. Handed a zero
 					// Delivery it would stay flat forever and nothing else in the
 					// suite would notice.
 					select {
-					case policy <- call{attempts: msg.Attempts, cause: cause}:
+					case policy <- call{attempts: delivery.Attempt, cause: cause}:
 					default:
 					}
 
@@ -87,7 +87,7 @@ func Test_RetryPolicy(t *testing.T) {
 			// checked below, and a wrong argument there must not fail the test
 			// before the deferral timing it exists to prove has been judged.
 			require.Less(t, waited, pollNever/2, "the deferral interrupted the armed wait")
-			require.Equal(t, 2, published.all()[0].Attempts, "the claim counted both attempts")
+			require.Equal(t, 2, published.all()[0].Attempt, "the claim counted both attempts")
 
 			// Every consultation, not just the first: a policy handed an attempt
 			// count that never moves would otherwise show up only in the one call
@@ -124,7 +124,7 @@ func Test_RetryPolicy(t *testing.T) {
 				return nil
 			})
 
-			// A channel, not a slice: Observer.Publish runs on every publisher
+			// A channel, not a slice: Observer.Published runs on every publisher
 			// goroutine at once, and an unsynchronised append is a race the detector
 			// only misses by luck.
 			observed := make(chan error, 8)
@@ -134,7 +134,7 @@ func Test_RetryPolicy(t *testing.T) {
 				outboxer.WithPollInterval(50*time.Millisecond),
 				outboxer.WithRetry(func(outboxer.Delivery, error) time.Duration { return 50 * time.Millisecond }),
 				outboxer.WithObserver(outboxer.Observer{
-					Publish: func(_ context.Context, _ outboxer.Delivery, err error) {
+					Published: func(_ context.Context, _ outboxer.Delivery, err error) {
 						select {
 						case observed <- err:
 						default:
@@ -149,7 +149,7 @@ func Test_RetryPolicy(t *testing.T) {
 			eventually(t, "the third attempt lands", func() bool { return published.count() == 1 })
 
 			require.NoError(t, stop(), "a publish failure never stops the relay")
-			require.Equal(t, 3, published.all()[0].Attempts)
+			require.Equal(t, 3, published.all()[0].Attempt)
 			require.Len(t, observed, 3, "every attempt is reported, failures included")
 			close(observed)
 		})
@@ -274,7 +274,7 @@ func Test_RetryPolicy(t *testing.T) {
 				outboxer.WithLease(lease),
 				outboxer.WithPollInterval(pollNever),
 				outboxer.WithObserver(outboxer.Observer{
-					Publish: func(_ context.Context, _ outboxer.Delivery, err error) {
+					Published: func(_ context.Context, _ outboxer.Delivery, err error) {
 						if err != nil {
 							select {
 							case failed <- struct{}{}:

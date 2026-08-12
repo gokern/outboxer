@@ -45,13 +45,13 @@ linters:
     ireturn:
       # The first four are ireturn's own defaults, restated because setting
       # allow at all replaces them; the Option types are sealed interfaces, so
-      # a relay setting cannot compile against NewInserter.
+      # a relay setting cannot compile against NewProducer.
       allow:
         - anon
         - error
         - empty
         - stdlib
-        - github.com/gokern/outboxer\.(Insert|Relay)?Option
+        - github.com/gokern/outboxer\.RelayOption
 
     depguard:
       rules:
@@ -96,7 +96,7 @@ linters:
 
     varnamelen:
       ignore-names:
-        - db # any handle satisfying DB, as Insert takes
+        - db # any handle satisfying Execer or Querier, as Insert and NewSampler take
         - i # a range index
         - n # a count, as WithMaxConcurrency takes
         - tc # table-driven case
@@ -164,7 +164,7 @@ linters:
           - cyclop # a grouped test's branches belong to its subtests
           - err113 # a test builds the error it is about to hand to a callback
           - exhaustruct # a test fills the fields under test and leaves the rest zero
-          - funlen # the table is the test; TestInserter_Insert is 281 lines of it
+          - funlen # the table is the test; TestProducer_Insert is 350 lines of it
           - gochecknoglobals # TestMain has to stash the DSN and the embedded DDL somewhere
           - goconst # repeated topic literals ("evt", "user.created") read better inline
           - gocognit # the same branches as cyclop, counted the other way

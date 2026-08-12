@@ -11,7 +11,7 @@ import (
 // Querier is a Postgres handle this package reads through: a *pgxpool.Pool, a
 // *pgxpool.Conn or a pgx.Tx all satisfy it.
 //
-// The single method is a guarantee, for the same reason DB's is: with no Exec
+// The single method is a guarantee, for the same reason Execer's is: with no Exec
 // and no Begin, a Sampler cannot write and cannot open a transaction. It is
 // also the whole burden on anyone wrapping a handle (a query logger, a tenant
 // router, a fake), who would otherwise have to produce a pgx.Rows for a method
@@ -19,7 +19,7 @@ import (
 //
 // Pass a pool. A *pgx.Conn satisfies this too and is not safe for concurrent
 // use — the hazard NewRelay avoids by taking no interface at all — and here a
-// Sampler keeps its handle for life, where an Inserter is handed one per call.
+// Sampler keeps its handle for life, where a Producer is handed one per call.
 type Querier interface {
 	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
 }
@@ -31,10 +31,10 @@ type Querier interface {
 // No single field is the alerting signal. They discriminate together, and the
 // combination is what says which failure you have:
 //
-//   - relay dead or wedged: Due grows, MaxAttempts frozen.
-//   - relay underprovisioned: Due grows, MaxAttempts low.
-//   - broker down: Due near zero, MaxAttempts climbing.
-//   - one poison row: Due near zero, MaxAttempts climbing on that row alone,
+//   - relay dead or wedged: Due grows, PeakAttempts frozen.
+//   - relay underprovisioned: Due grows, PeakAttempts low.
+//   - broker down: Due near zero, PeakAttempts climbing.
+//   - one poison row: Due near zero, PeakAttempts climbing on that row alone,
 //     Pending flat.
 //
 // Due and OldestAge are lock-blind: a row a replica holds mid-claim has not
@@ -61,13 +61,13 @@ type Stats struct {
 	// written and not from when it becomes due, so a producer that schedules
 	// days out carries a permanently large age here. Excluding those is
 	// impossible — a deferred, a leased and a retried row all look the same —
-	// so such a service alerts on Due and MaxAttempts instead.
+	// so such a service alerts on Due and PeakAttempts instead.
 	OldestAge time.Duration
 
-	// MaxAttempts is the highest attempt count among undelivered rows. The
+	// PeakAttempts is the highest attempt count among undelivered rows. The
 	// claim counts an attempt as it takes the lease, so frozen means nothing is
 	// claiming and climbing means rows are claimed and failing.
-	MaxAttempts int
+	PeakAttempts int
 }
 
 // Sampler reads the state of one outbox table. Build one per table when the
@@ -77,14 +77,14 @@ type Stats struct {
 // reading is wanted precisely when no relay is running: a crashed process
 // reports nothing, and the table is the only thing left that can.
 //
-// It holds its handle, unlike [Inserter], which cannot: an inserter that stored
+// It holds its handle, unlike [Producer], which cannot: a producer that stored
 // a pool could not commit with the caller's transaction, and that is the whole
 // point of the outbox. A read is under no such constraint, and nothing here
 // mutates after NewSampler returns, so a Sampler is safe for concurrent use
 // exactly as far as its handle is: a pool yes, a single connection no.
 //
 // The zero value is not usable. NewSampler renders the statement, so a Sampler
-// nobody built carries none, and Sample reports ErrInvalidConfig rather than
+// nobody built carries none, and Stats reports ErrInvalidConfig rather than
 // letting the mistake surface as a nil dereference on its own handle.
 type Sampler struct {
 	db    Querier
@@ -98,12 +98,12 @@ type Sampler struct {
 // The name is validated here and never again, so a Sampler that exists is one
 // whose statement is safe to run. Build it where the error can be returned and
 // not on the path that scrapes.
-func NewSampler(db Querier, opts ...SampleOption) (*Sampler, error) {
+func NewSampler(db Querier, opts ...SamplerOption) (*Sampler, error) {
 	if db == nil {
 		return nil, invalidConfig("no database handle passed to NewSampler")
 	}
 
-	cfg, err := buildSampleConfig(opts)
+	cfg, err := buildSamplerConfig(opts)
 	if err != nil {
 		return nil, err
 	}
@@ -111,7 +111,7 @@ func NewSampler(db Querier, opts ...SampleOption) (*Sampler, error) {
 	return &Sampler{db: db, table: cfg.table, sql: sampleSQL(cfg.table)}, nil
 }
 
-// Sample reads the table's current state in one statement.
+// Stats reads the table's current state in one statement.
 //
 // While the backlog is small this is a seek into the claim's partial index and
 // the published rows are never touched, however many have accumulated. That
@@ -122,7 +122,7 @@ func NewSampler(db Querier, opts ...SampleOption) (*Sampler, error) {
 // pending rows as published ones.
 //
 // Scrape it on an interval of tens of seconds, never per request.
-func (s *Sampler) Sample(ctx context.Context) (Stats, error) {
+func (s *Sampler) Stats(ctx context.Context) (Stats, error) {
 	var empty Stats
 
 	// The type is exported so it can be held in a struct field, and an unset
@@ -139,7 +139,7 @@ func (s *Sampler) Sample(ctx context.Context) (Stats, error) {
 		seconds float64
 	)
 
-	err := s.db.QueryRow(ctx, s.sql).Scan(&stats.Pending, &stats.Due, &seconds, &stats.MaxAttempts)
+	err := s.db.QueryRow(ctx, s.sql).Scan(&stats.Pending, &stats.Due, &seconds, &stats.PeakAttempts)
 	if err != nil {
 		return empty, fmt.Errorf("outboxer: sample %s: %w", s.table, asSchemaError(err))
 	}
