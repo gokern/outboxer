@@ -14,7 +14,8 @@
 
 A transactional outbox for Postgres and Go. Write events to a table inside the same
 transaction as your business data; a relay claims them and hands each to your publish
-function, at-least-once, safely across replicas. Depends only on `pgx`.
+function, at-least-once, safely across replicas. Depends on `pgx`, and on
+[`gokern/panics`](https://github.com/gokern/panics), which has none of its own.
 
 ```go
 // Producer: built once at wiring time, then the row and the business data
@@ -247,14 +248,20 @@ shared handle.
   through `Observer.Published`. The deferral is written *before* the observer runs, so a slow
   observer cannot sit between a failure and the recording of its consequence.
 - **A `PublishFunc` that panics is a publish failure, not a crash.** The panic is recovered
-  and reaches you as an error wrapping `ErrPublishPanicked`, carrying the panic value and
-  its stack, through both `RetryFunc` and `Observer.Published`. It is the one callback this
-  package guards, for the same reason skipping a row with undecodable headers does not stop
-  the relay: one message must not stop every other one. Unguarded, a panic would abandon
+  and reaches you through both `RetryFunc` and `Observer.Published`: `panics.Is(err)` reports
+  it, and `panics.As(err)` gives you the value it was raised with and the frames it came
+  from. It is contained for the same reason skipping a row with undecodable headers does not
+  stop the relay: one message must not stop every other one. Uncontained, it would abandon
   every delivery in flight beside it, including rows already published and about to be
   marked, each of which returns at lease expiry as a duplicate. The same row would then meet
-  the same bug after every restart. Match on the error if a row that panics deserves a
-  policy of its own; it will very likely panic again.
+  the same bug after every restart. Match on it if a row that panics deserves a policy of its
+  own; it will very likely panic again. The test is a broad one: it holds for a panic
+  contained anywhere, including one your own code recovered and reported as an ordinary
+  error, which the relay cannot tell apart from a panic of its own making.
+- **Every other function you supply is contained too.** A `RetryFunc`, a `DialFunc` and every
+  `Observer` field run on the relay's goroutines, and a panic in one of those is an advisory
+  rather than the delivery's own error: it reaches `Observer.Warned`, and a `DialFunc`'s
+  reaches `Observer.ListenerChanged`.
 - **A storage failure on the claim is fatal.** `Run` returns it. Nothing was claimed and
   nothing was published, so the cost is delay and not correctness. The relay stops anyway,
   because how long an unreachable database is worth waiting for is your policy and not this
@@ -433,7 +440,7 @@ Each of these is withheld on purpose, not missing.
 | **Guarantee order, or exactly-once** | Replicas are safe but unordered, and delivery is at-least-once; see **Delivery semantics**. |
 | **Give up on a poison row** | It hands you `Delivery.Attempt` and never picks the threshold. Refusing a row whose count has gone absurd is your policy, inside `PublishFunc`. |
 | **Log, or break a circuit** | Every outcome reaches you through `Observer`; stopping is cancelling the context you passed to `Run`. |
-| **Export metrics from this module** | This `go.mod` stays at one dependency whatever you export them with. [`outboxprom`](outboxprom) does the exporting, as a module of its own: importing it is opt-in, and not importing it costs you nothing. |
+| **Export metrics from this module** | This `go.mod` keeps its one external dependency whatever you export them with. [`outboxprom`](outboxprom) does the exporting, as a module of its own: importing it is opt-in, and not importing it costs you nothing. |
 | **Scrape itself** | `Sampler` has no ticker and starts no goroutine. It reads when you call it, so the cadence, the timeout and the registry belong to your scraper. |
 
 ## Development

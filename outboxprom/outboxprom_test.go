@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gokern/panics"
 	"github.com/jackc/pgx/v5"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/testutil"
@@ -84,9 +85,16 @@ func Test_WarningKindsMatchWhatOutboxerSends(t *testing.T) {
 	// The sentinels the relay actually wraps on its way to Observer.Warned. A
 	// poll interval at or above the lease — the first advisory the package
 	// documents — arrives as ErrInvalidConfig.
+	//
+	// These are built here rather than taken from a running relay, so what this
+	// test says is that the mapping is complete, not that the relay in go.mod
+	// produces it. panics.ErrPanic is the one that can drift: it holds only while
+	// the relay marks its panics through github.com/gokern/panics. One that marks
+	// them another way compiles against this module just the same and lands every
+	// panic in "other".
 	cases := map[string]error{
 		"invalid_config":      outboxer.ErrInvalidConfig,
-		"callback_panicked":   outboxer.ErrCallbackPanicked,
+		"callback_panicked":   panics.ErrPanic,
 		"retry_negative":      outboxer.ErrRetryNegative,
 		"headers_not_strings": outboxer.ErrHeadersNotStrings,
 		"schema_mismatch":     outboxer.ErrSchemaMismatch,
@@ -478,7 +486,7 @@ func Test_Refusals(t *testing.T) {
 		}
 	})
 
-	// Both of these used to build a Metrics happily and then fail inside
+	// Unchecked, both of these build a Metrics happily and then fail inside
 	// Register — which, since every example here registers with MustRegister,
 	// is a panic at process startup, arbitrarily far from the option that
 	// caused it. Refusing at the call site is the whole point of returning an

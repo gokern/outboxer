@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gokern/panics"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -17,56 +18,18 @@ import (
 	"github.com/gokern/outboxer"
 )
 
-// A panic in caller code is a failure of one row, never of the process. Two
-// halves. PanicError is what the panic becomes: a value a RetryFunc can key a
-// policy on, and a stack a human can read. Test_Panics is the containment
-// itself, which without the guard would take every publish in flight down with
-// it, including rows already at the broker and about to be marked.
+// A panic in caller code is a failure of one row, never of the process.
+// Uncontained, one would take every publish in flight down with it, rows
+// already at the broker and about to be marked included.
+//
+// Capturing the stack belongs to github.com/gokern/panics and is tested there.
+// These tests cover this package's half: every function a caller supplies is
+// contained, and what it panicked with reaches the caller intact.
 
-// PanicError is what every caller callback's panic becomes: a value the relay
-// can carry to a RetryFunc and a stack a human can read.
-func TestPanicError(t *testing.T) {
-	t.Parallel()
-
-	// The stack has to start where the panic did. A recover unwinds every frame
-	// between the guard and the panic site before the deferred function runs, so a
-	// skip count chosen by reading the code lands past exactly the frames worth
-	// keeping. This asserts the measured one still holds.
-	t.Run("carries the stack from the panic site", func(t *testing.T) {
-		t.Parallel()
-
-		err := outboxer.CaptureForTest(panicsWithAValue)
-
-		var panicked *outboxer.PanicError
-
-		require.ErrorAs(t, err, &panicked)
-		require.ErrorIs(t, err, outboxer.ErrCallbackPanicked)
-		require.Equal(t, "a plain value", panicked.Value)
-
-		frame, _ := runtime.CallersFrames(panicked.StackTrace()).Next()
-		require.Equal(t, "github.com/gokern/outboxer_test.panicsWithAValue", frame.Function,
-			"the innermost frame is where panic was called")
-
-		require.NotContains(t, err.Error(), "\n", "and the stack stays out of the message")
-		require.NotContains(t, err.Error(), "goroutine")
-	})
-
-	// A caller that panicked with an error of its own keeps it: that is what lets a
-	// RetryFunc key a policy on the cause instead of on the text.
-	t.Run("preserves a typed cause", func(t *testing.T) {
-		t.Parallel()
-
-		errCallerOwn := errors.New("the caller's own error type")
-
-		err := outboxer.CaptureForTest(func() {
-			panic(fmt.Errorf("wrapped: %w", errCallerOwn))
-		})
-
-		require.ErrorIs(t, err, outboxer.ErrCallbackPanicked, "the class is still matchable")
-		require.ErrorIs(t, err, errCallerOwn, "and so is what the caller actually panicked with")
-		require.Contains(t, err.Error(), "wrapped")
-	})
-}
+// errPoisonPayload is what the publish below panics with, wrapped in a message.
+// A policy in RetryFunc keys on the cause and not on the text, so the error has
+// to arrive there as itself.
+var errPoisonPayload = errors.New("the payload tripped a bug in the caller's code")
 
 // Containment, from the two directions a caller's code reaches a relay
 // goroutine: the publisher itself, and everything else it may hand over.
@@ -74,19 +37,19 @@ func Test_Panics(t *testing.T) {
 	t.Parallel()
 
 	// A payload that trips a bug in the caller's publish function costs that row a
-	// retry, not the process. Without the guard the panic would take every delivery
-	// in flight down with it, rows already published and about to be marked
-	// included, each of which comes back at lease expiry as a duplicate. And the
-	// same row would meet the same bug after every restart.
+	// retry, not the process. Uncontained the panic would take every delivery in
+	// flight down with it, rows already published and about to be marked included,
+	// each of which comes back at lease expiry as a duplicate. And the same row
+	// would meet the same bug after every restart.
 	t.Run("a panicking publish is a failure and not a crash", func(t *testing.T) {
 		t.Parallel()
 
 		withTable(t, 3, func(pool *pgxpool.Pool, table string) {
-			var panics atomic.Int64
+			var panicCount atomic.Int64
 
 			published := newCollector(func(delivery outboxer.Delivery) error {
-				if delivery.Topic == "poison" && panics.Add(1) == 1 {
-					panic("the payload tripped a bug in the caller's code")
+				if delivery.Topic == "poison" && panicCount.Add(1) == 1 {
+					panic(fmt.Errorf("topic %q: %w", delivery.Topic, errPoisonPayload))
 				}
 
 				return nil
@@ -126,20 +89,75 @@ func Test_Panics(t *testing.T) {
 			require.NoError(t, stop(), "a panicking publish is not a storage failure")
 
 			reported := awaited(t, failures, "the panic was never reported")
-			require.ErrorIs(t, reported, outboxer.ErrPublishPanicked)
-			require.Contains(t, reported.Error(), "tripped a bug", "the panic value comes with it")
+			require.ErrorIs(t, reported, panics.ErrPanic)
+			require.ErrorIs(t, reported, errPoisonPayload, "the caller's own error type survives the trip")
+			require.Contains(t, reported.Error(), "tripped a bug", "and so does what it renders as")
 
-			var panicked *outboxer.PanicError
+			panicked, ok := panics.As(reported)
+			require.True(t, ok, "the panic itself is reachable through the wrap: %v", reported)
+			require.NotEmpty(t, panicked.StackTrace(), "the stack comes with it, off the message")
 
-			require.ErrorAs(t, reported, &panicked)
-			require.NotEmpty(t, panicked.StackTrace(), "and the stack comes with it, off the message")
+			require.NotContains(t, reported.Error(), "\n", "which is how the message stays one line")
+			require.NotContains(t, reported.Error(), "goroutine")
+
+			// The frames start in the caller's own code. A stack that led with the
+			// recovery would blame outboxer for a bug in the function it ran.
+			frame, _ := runtime.CallersFrames(panicked.StackTrace()).Next()
+			require.True(t, strings.HasSuffix(frame.File, "panic_test.go"),
+				"the innermost frame is where panic was called, got %s:%d", frame.File, frame.Line)
+		})
+	})
+
+	// A PublishFunc that recovers a panic itself and reports it as an ordinary
+	// error is a publish failure like any other, and its error travels untouched:
+	// nothing escaped into the relay for a wrap to name. panics.Is holds on it all
+	// the same, which is the broad test the package doc describes. An error the
+	// caller got from a library that recovers through panics behaves the same way.
+	t.Run("an error the caller returned is passed through untouched", func(t *testing.T) {
+		t.Parallel()
+
+		withTable(t, 2, func(pool *pgxpool.Pool, table string) {
+			published := newCollector(func(outboxer.Delivery) error {
+				return panics.Catch(func() { panic("recovered inside the caller's own code") })
+			})
+
+			failures := make(chan error, 4)
+
+			relay, err := outboxer.NewRelay(pool, published.Publish,
+				outboxer.WithTable(table),
+				outboxer.WithPollInterval(pollNever),
+				outboxer.WithObserver(outboxer.Observer{
+					Published: func(_ context.Context, _ outboxer.Delivery, err error) {
+						if err == nil {
+							return
+						}
+
+						select {
+						case failures <- err:
+						default:
+						}
+					},
+				}))
+			require.NoError(t, err)
+
+			require.NoError(t, insertInto(t, pool, table, dueNow()))
+
+			stop := relayRun(t, relay)
+
+			reported := awaited(t, failures, "the failure never reached Observer.Published")
+
+			require.NoError(t, stop())
+
+			require.ErrorIs(t, reported, panics.ErrPanic, "the contained panic is still in there")
+			require.NotContains(t, reported.Error(), "outboxer: ",
+				"and the relay added nothing to an error it did not contain")
 		})
 	})
 
 	// PublishFunc is not the only function of the caller's that runs on a relay
 	// goroutine. RetryFunc and every Observer field do too, and a panic in any of
 	// them reaching the runtime would abandon every delivery in flight beside it,
-	// at the same cost as above. Guarding one of the four and not the rest would
+	// at the same cost as above. Containing one of the four and not the rest would
 	// have been an accident, not a policy.
 	t.Run("a panic in any caller callback is contained", func(t *testing.T) {
 		t.Parallel()
@@ -184,12 +202,18 @@ func Test_Panics(t *testing.T) {
 
 			require.NoError(t, stop(), "a panicking callback is not a storage failure")
 
-			// Both panics are contained and both are named. Unguarded, either would
-			// have taken the test binary down instead.
+			// Both panics are contained and both are named. Uncontained, either
+			// would have taken the test binary down instead.
 			var reported []string
 			for len(reported) < 2 {
 				err := awaited(t, warned, "a contained panic went unreported")
-				require.ErrorIs(t, err, outboxer.ErrCallbackPanicked)
+				require.ErrorIs(t, err, panics.ErrPanic)
+
+				// The advisory wrap names the callback and the row; it must not
+				// bury the panic underneath itself.
+				p, ok := panics.As(err)
+				require.True(t, ok, "the panic is still reachable through the wrap: %v", err)
+				require.NotEmpty(t, p.StackTrace())
 
 				reported = append(reported, err.Error())
 			}
@@ -200,7 +224,3 @@ func Test_Panics(t *testing.T) {
 		})
 	})
 }
-
-// panicsWithAValue is a named function and not a closure, because TestPanicError
-// asserts on the innermost stack frame by name.
-func panicsWithAValue() { panic("a plain value") }

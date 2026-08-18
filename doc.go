@@ -30,6 +30,35 @@
 // every constructor accepts. Every other setting belongs to the relay, and the
 // compiler refuses it on [NewProducer] and [NewSampler] alike.
 //
+// # Panics in caller code
+//
+// Every function the caller supplies runs on a relay goroutine: [PublishFunc],
+// [RetryFunc], [DialFunc] and every field of [Observer]. A panic in one of them
+// is contained and never fatal, because a panic that reached the runtime would
+// abandon every delivery in flight beside it, rows already published and about
+// to be marked included, each of which comes back at lease expiry as a
+// duplicate.
+//
+// Where the contained panic arrives says which function raised it. A PublishFunc
+// panic is the outcome of the delivery, so it becomes that publish's error and
+// travels to [RetryFunc] and Observer.Published, and the row is deferred like
+// any other failed publish. Every other panic is an advisory alongside the work
+// and reaches Observer.Warned, except a DialFunc's, which reaches
+// Observer.ListenerChanged, since from the listener's side it is a dial that
+// produced no connection. A panic in Warned itself arrives nowhere: the
+// reporting channel cannot report its own failure. A panicking RetryFunc also
+// forfeits its say, and the row is deferred by one lease, which is what it would
+// have waited had the process died.
+//
+// Recovery goes through github.com/gokern/panics: panics.Is(err) reports that an
+// error carries a panic, and panics.As(err) reaches the value it was raised with
+// and the frames it came from. The test is a broad one: it holds for a panic
+// contained anywhere, including one a PublishFunc recovered itself and reported
+// as an ordinary error. The relay cannot tell those apart, and does not try.
+//
+// A row that panics will very likely panic again, so a policy of its own belongs
+// in [RetryFunc].
+//
 // # What this package does not own
 //
 // It never opens a transaction. Every statement it issues is a single

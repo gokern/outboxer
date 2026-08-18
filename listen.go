@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/gokern/panics"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -160,7 +161,7 @@ func (r *Relay) dial(ctx context.Context) (*pgx.Conn, error) {
 		err  error
 	)
 
-	panicked := guard(ErrCallbackPanicked, func() { conn, err = r.cfg.dialer(ctx) })
+	panicked := panics.Catch(func() { conn, err = r.cfg.dialer(ctx) })
 	if panicked != nil {
 		return nil, fmt.Errorf("outboxer: dial listener: %w", panicked)
 	}

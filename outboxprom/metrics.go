@@ -5,6 +5,7 @@ import (
 	"errors"
 	"time"
 
+	"github.com/gokern/panics"
 	"github.com/prometheus/client_golang/prometheus"
 
 	"github.com/gokern/outboxer"
@@ -187,13 +188,18 @@ func (m *Metrics) Collect(ch chan<- prometheus.Metric) {
 //
 // The list is what reaches Observer.Warned, which is not the list of sentinels
 // outboxer exports. ErrInvalidConfig is here because the poll-interval advisory
-// carries it. ErrPublishPanicked is absent deliberately: a panicking
-// PublishFunc is returned as that publish's error, so it reaches RetryFunc and
-// Observer.Published and never Warned. A case for it would be a label that can
-// never move — a row on a dashboard sitting at zero, read as good news.
+// carries it.
+//
+// panics.Is matches an error carrying a panic contained anywhere, so what makes
+// the label specific is which errors get here rather than what the test proves.
+// A panicking PublishFunc is returned as that publish's error and travels to
+// RetryFunc and Observer.Published, never here, and no advisory the relay builds
+// carries an error of the caller's. A label of its own for the publish case
+// would be one that can never move, a row on a dashboard sitting at zero and
+// read as good news.
 func warningKind(err error) string {
 	switch {
-	case errors.Is(err, outboxer.ErrCallbackPanicked):
+	case panics.Is(err):
 		return "callback_panicked"
 	case errors.Is(err, outboxer.ErrRetryNegative):
 		return "retry_negative"

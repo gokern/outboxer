@@ -63,7 +63,8 @@ linters:
           allow:
             - $gostd
             - github.com/gokern/outboxer # the package's own test binaries
-            - github.com/jackc/pgx/v5 # the module's only dependency
+            - github.com/gokern/panics # the shared recovered-panic type
+            - github.com/jackc/pgx/v5 # the module's only external dependency
             - github.com/stretchr/testify # test-only, and stays that way
             - go.uber.org/goleak # test-only, and stays that way
 
@@ -78,10 +79,12 @@ linters:
           allow:
             - $gostd
             - github.com/gokern/outboxer
+            - github.com/gokern/panics # the shared recovered-panic type, for the warning label
             - github.com/jackc/pgx/v5
             - github.com/stretchr/testify
             - github.com/prometheus/client_golang # outboxprom's reason to exist
             - github.com/prometheus/client_model # the protobuf types a Gatherer returns, for assertions
+
 
     govet:
       enable-all: true # for shadow, which the default set leaves out

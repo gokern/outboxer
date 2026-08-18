@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gokern/panics"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/stretchr/testify/assert"
@@ -157,9 +158,9 @@ func Test_Listener(t *testing.T) {
 		})
 	})
 
-	// The doc for ErrCallbackPanicked promises that a DialFunc panic arrives
-	// through ListenerChanged, since from the listener's side it is a dial that
-	// produced no connection. Every other guarded callback has its panic test in
+	// The package doc promises that a DialFunc panic arrives through
+	// ListenerChanged, since from the listener's side it is a dial that produced
+	// no connection. Every other contained callback has its panic test in
 	// panic_test.go; this is the dialer's.
 	t.Run("a panicking dialer degrades to polling and is reported", func(t *testing.T) {
 		t.Parallel()
@@ -193,7 +194,7 @@ func Test_Listener(t *testing.T) {
 			})
 
 			reported := awaited(t, changes, "the panic was never reported")
-			require.ErrorIs(t, reported, outboxer.ErrCallbackPanicked,
+			require.ErrorIs(t, reported, panics.ErrPanic,
 				"the report carries the sentinel, so a caller can match on the cause")
 			require.NoError(t, stop(), "a panicking dialer costs the listener, never the relay")
 		})

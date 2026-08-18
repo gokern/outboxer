@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"time"
+
+	"github.com/gokern/panics"
 )
 
 // dispatch claims and hands out work until the outbox is empty or the context
@@ -221,19 +223,23 @@ func (r *Relay) deliver(ctx context.Context, delivery Delivery) {
 // publishOnce runs the caller's publish function under its own timeout and
 // turns a panic into an ordinary publish failure.
 //
-// Every function the caller supplies is guarded; the doc for
-// ErrCallbackPanicked has the arithmetic. This one differs from the rest only
-// in where the panic goes: it is the outcome of the delivery, so it becomes
-// the publish error itself rather than an advisory alongside it. It is
-// wrapped here because it travels to RetryFunc and Observer.Published directly,
-// with no boundary wrap of its own to name the package and the row.
+// Every function the caller supplies is contained; the package doc has the
+// arithmetic. This one differs from the rest only in where the panic goes: it is
+// the outcome of the delivery, so it becomes the publish error itself rather
+// than an advisory alongside it. It is wrapped here because it travels to
+// RetryFunc and Observer.Published directly, with no boundary wrap of its own to
+// name the package and the row.
+//
+// An error the caller returned the ordinary way is passed through untouched. It
+// already reads in the caller's terms, and nothing escaped into this package for
+// a wrap to name.
 func (r *Relay) publishOnce(ctx context.Context, delivery Delivery) error {
 	pubCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), r.cfg.publishTimeout)
 	defer cancel()
 
 	var publishErr error
 
-	panicked := guard(ErrPublishPanicked, func() { publishErr = r.publish(pubCtx, delivery) })
+	panicked := panics.Catch(func() { publishErr = r.publish(pubCtx, delivery) })
 	if panicked != nil {
 		return fmt.Errorf("outboxer: %s id=%d: %w", r.cfg.table, delivery.ID, panicked)
 	}
