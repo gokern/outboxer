@@ -12,7 +12,7 @@ import "time"
 // is never demonstrated is an assertion and not a tested property; the
 // constructor refuses the state, so nothing else can produce it. And a piece of
 // internal machinery with no public surface at all: the statement text a planner
-// is asked about, and the panic guard itself.
+// is asked about.
 //
 // Nothing here widens the package's own API: these identifiers exist only in the
 // test build, and adding one is a decision to test something the public surface
@@ -60,12 +60,6 @@ func StallAfterForTest(r *Relay, after time.Duration) {
 // refuses that state, so nothing else in the package can reach it.
 func ShortenLeaseForTest(r *Relay, lease time.Duration) {
 	r.cfg.lease = lease
-}
-
-// CaptureForTest exposes guard so a test can check where the captured stack
-// starts.
-func CaptureForTest(call func()) error {
-	return guard(ErrCallbackPanicked, call)
 }
 
 // PruneBatch exposes the sweep's batch size so a test can arrange a backlog

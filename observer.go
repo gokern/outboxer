@@ -3,6 +3,8 @@ package outboxer
 import (
 	"context"
 	"fmt"
+
+	"github.com/gokern/panics"
 )
 
 // Observer is how everything the relay does becomes visible. The package has no
@@ -23,9 +25,9 @@ import (
 // obvious counter incremented in Published is a data race.
 //
 // A callback that panics is contained, not fatal. It runs beside deliveries in
-// flight, and letting the process die would abandon all of them; the doc for
-// ErrCallbackPanicked has the full cost. The panic becomes an advisory and is
-// reported through Warned.
+// flight, and letting the process die would abandon all of them; the package doc
+// has the full cost. The panic becomes an advisory and is reported through
+// Warned.
 type Observer struct {
 	// Published is called after every publish attempt, successful or not. On
 	// failure the row has already been deferred by the time this runs, so a
@@ -88,7 +90,7 @@ func (r *Relay) observePublish(ctx context.Context, delivery Delivery, err error
 		return
 	}
 
-	r.notePanic("Published", guard(ErrCallbackPanicked, func() { r.cfg.observer.Published(ctx, delivery, err) }))
+	r.notePanic("Published", panics.Catch(func() { r.cfg.observer.Published(ctx, delivery, err) }))
 }
 
 func (r *Relay) observeWoke() {
@@ -96,7 +98,7 @@ func (r *Relay) observeWoke() {
 		return
 	}
 
-	r.notePanic("Woke", guard(ErrCallbackPanicked, r.cfg.observer.Woke))
+	r.notePanic("Woke", panics.Catch(r.cfg.observer.Woke))
 }
 
 func (r *Relay) observeListener(err error) {
@@ -104,7 +106,7 @@ func (r *Relay) observeListener(err error) {
 		return
 	}
 
-	r.notePanic("ListenerChanged", guard(ErrCallbackPanicked, func() { r.cfg.observer.ListenerChanged(err) }))
+	r.notePanic("ListenerChanged", panics.Catch(func() { r.cfg.observer.ListenerChanged(err) }))
 }
 
 func (r *Relay) observePruned(deleted int64, err error) {
@@ -112,7 +114,7 @@ func (r *Relay) observePruned(deleted int64, err error) {
 		return
 	}
 
-	r.notePanic("Pruned", guard(ErrCallbackPanicked, func() { r.cfg.observer.Pruned(deleted, err) }))
+	r.notePanic("Pruned", panics.Catch(func() { r.cfg.observer.Pruned(deleted, err) }))
 }
 
 func (r *Relay) observeWarn(err error) {
@@ -122,7 +124,7 @@ func (r *Relay) observeWarn(err error) {
 
 	// Swallowed on purpose, and only here: reporting a panicking Warned through
 	// Warned is a loop, and there is nowhere else for the report to go.
-	_ = guard(ErrCallbackPanicked, func() { r.cfg.observer.Warned(err) })
+	_ = panics.Catch(func() { r.cfg.observer.Warned(err) })
 }
 
 // notePanic forwards a contained callback panic to Warned, if there was one.

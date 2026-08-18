@@ -45,36 +45,6 @@ var (
 	// Nothing was written when this is returned: a batch is rejected whole.
 	ErrInvalidMessage = errors.New("invalid message")
 
-	// ErrCallbackPanicked reports a RetryFunc, an Observer callback or a
-	// DialFunc that panicked, wrapping the panic value and the stack it came
-	// from. A RetryFunc or an Observer panic arrives through Observer.Warned; a
-	// DialFunc panic arrives through Observer.ListenerChanged, since from the
-	// listener's side it is a dial that produced no connection. When the
-	// panicking callback was Warned itself it arrives nowhere, since the
-	// reporting channel cannot report its own failure.
-	//
-	// Containing these matters because they run on the relay's goroutines
-	// beside deliveries in flight: a panic that reached the runtime would
-	// abandon every one of those, rows already published and about to be
-	// marked included, and each of those comes back at lease expiry as a
-	// duplicate.
-	//
-	// A panicking RetryFunc additionally forfeits its say: the row is deferred
-	// by one lease, which is what it would have waited had the process died.
-	ErrCallbackPanicked = errors.New("callback panicked")
-
-	// ErrPublishPanicked reports a PublishFunc that panicked. The panic is
-	// recovered and the row is deferred like any other failed publish, so one
-	// message cannot take the process down and every in-flight delivery with
-	// it. ErrCallbackPanicked spells out what that would cost.
-	//
-	// It is exported because it is the one publish failure that deserves a
-	// policy of its own: a row that panics will very likely panic again, and
-	// RetryFunc is where a caller says what to do about that. It arrives there,
-	// and at Observer.Published, wrapped together with the panic value and the
-	// stack it came from.
-	ErrPublishPanicked = errors.New("publish function panicked")
-
 	// ErrAlreadyRun reports a second call to Run on the same Relay. A Relay is
 	// single-use, so a supervisor that restarts Run on error would otherwise
 	// spin here forever without being able to tell why.

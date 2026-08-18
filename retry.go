@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"time"
+
+	"github.com/gokern/panics"
 )
 
 // retryDelay asks the caller's policy when a failed row is due again.
@@ -13,7 +15,7 @@ import (
 func (r *Relay) retryDelay(delivery Delivery, cause error) time.Duration {
 	var delay time.Duration
 
-	panicked := guard(ErrCallbackPanicked, func() { delay = r.cfg.retry(delivery, cause) })
+	panicked := panics.Catch(func() { delay = r.cfg.retry(delivery, cause) })
 	if panicked != nil {
 		r.observeWarn(fmt.Errorf("outboxer: %s id=%d: RetryFunc: %w", r.cfg.table, delivery.ID, panicked))
 

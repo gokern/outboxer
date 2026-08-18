@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gokern/panics"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/stretchr/testify/require"
 
@@ -102,7 +103,7 @@ func TestErrors_NameThePackageExactlyOnce(t *testing.T) {
 			stop := relayRun(t, relay)
 
 			reported := awaited(t, failures, "the panic never reached Observer.Published")
-			require.ErrorIs(t, reported, outboxer.ErrPublishPanicked)
+			require.ErrorIs(t, reported, panics.ErrPanic)
 			prefixOnce(t, reported)
 
 			require.NoError(t, stop())
