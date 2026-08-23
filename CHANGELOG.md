@@ -3,7 +3,17 @@
 Notable changes to `outboxer`. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+## 0.5.0 — 2026-08-23
+
+Two findings about the LISTEN session, from opposite ends. A row committed while the
+relay was still dialling waited out a whole poll interval on every process start, and
+`outboxprom` reported a healthy relay's listener as down for the life of the process.
+Nothing reported either one. Both were found by measuring rather than by reading.
+
+> **Two things a dashboard notices.** `outbox_listener_up` is gone, replaced by
+> `outbox_listener_transitions_total{to="up"|"down"}`. And `Observer.Woke` beats once or
+> twice more per LISTEN transition, so an alert on the idle heartbeat's rate reads a
+> little higher on a relay whose session flaps. Nothing stops compiling.
 
 ### Fixed
 
@@ -65,6 +75,16 @@ versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   but it was stated only in a comment inside the package. A caller deriving a level from the
   silence gets a healthy relay backwards, which is exactly what the gauge above did. The README
   says it too, and a test now holds it down instead of leaving it to a comment.
+
+### Security
+
+- **`golang.org/x/text` moves to 0.41.0, past GO-2026-5970.** Nothing here calls the
+  affected code: `govulncheck` found zero affected symbols before the bump and finds none
+  after, so no earlier release was reachable through it. It is in this one because a
+  module whose only source of `x/text` was this package inherited the flagged version
+  into its own scan, and a tag cannot be taken back. `golang.org/x/sync` moves to 0.22.0
+  beside it and `outboxprom` follows both, which also converges two modules that had
+  drifted to different versions of each. No direct dependency changes.
 
 ## 0.4.0 — 2026-08-18
 
