@@ -316,7 +316,7 @@ Every field is optional.
 | Field | Fires |
 |---|---|
 | `Published` | after every publish attempt, successful or not |
-| `Woke` | every time the relay stops waiting; the idle heartbeat |
+| `Woke` | every time the relay stops waiting, the LISTEN session coming up included; the idle heartbeat |
 | `ListenerChanged` | once per LISTEN connection transition; `nil` means recovered |
 | `Pruned` | after each retention sweep, with the row count |
 | `Warned` | non-fatal advisories: a poll interval at or above the lease, a clamped negative retry, a row whose headers could not be decoded, a deferral the database refused, a failed read of when the next row falls due, a callback of yours that panicked |

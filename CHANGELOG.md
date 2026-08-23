@@ -3,6 +3,39 @@
 Notable changes to `outboxer`. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+### Fixed
+
+- **The first row a relay is asked to publish no longer waits out a poll interval.**
+  `Run` starts the LISTEN session on a goroutine of its own and goes straight into the
+  drain loop, so the first claim, the due lookup and the first wait all happened while
+  the dial was still in flight — a handshake, an authentication and a `LISTEN` round
+  trip, a few milliseconds on loopback and more under the race detector. A row committed
+  inside that window was too late for the claim's snapshot and too early for the
+  subscription, so nothing found it until the poll tick: ten seconds at the default,
+  once per process start, once per replica of a rolling restart.
+
+  It was also invisible. `Observer.ListenerChanged` says nothing about a first
+  successful dial, `Observer.Warned` had nothing to report, and the row was eventually
+  published with `Attempt == 1` and no error — from outside, indistinguishable from a
+  slow broker.
+
+  A subscription coming up is now a reason to claim rather than something the relay
+  learns about only when a notification happens to arrive, and a wait is no longer armed
+  on a claim the subscription did not cover. No API changes and `Run` gains no start-up
+  delay of its own: a relay whose dialer fails, panics or hangs starts and drains exactly
+  as before, since polling is the documented fallback and has to stay one.
+
+  One thing an observer sees is new. `Observer.Woke` beats once per LISTEN transition,
+  twice where the wake-up lands either side of the dispatcher's read, because a
+  transition is now a pass the relay takes rather than something it learns about on the
+  next tick. A rate alert on the idle heartbeat sees a little more from a relay whose
+  session flaps.
+
+  Reported against 0.4.0, where it surfaced in a consumer's suite as a delivery test
+  that failed roughly one run in four under `-race`.
+
 ## 0.4.0 — 2026-08-18
 
 Panic recovery moves to [`github.com/gokern/panics`](https://github.com/gokern/panics).
