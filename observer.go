@@ -64,6 +64,18 @@ type Observer struct {
 	// It exists because the degrade is otherwise silent. The relay keeps
 	// draining on its poll tick with no push wake-ups, which looks like nothing
 	// at all until latency is measured.
+	//
+	// A first successful dial is not a transition and is not reported. So
+	// silence here means the connection has never changed state, not that it is
+	// down, and a relay that dials once and keeps that session for a month
+	// calls this exactly zero times. Count the changes if you want a signal;
+	// deriving a level from the silence gets a healthy relay backwards.
+	//
+	// It also cannot see a push path that dies with the connection intact — a
+	// session opened through a transaction-pooling pooler, or a table with no
+	// NOTIFY trigger. Both leave this quiet and the relay polling. Delivery
+	// latency is what catches those, because it measures the outcome instead of
+	// the mechanism.
 	ListenerChanged func(err error)
 
 	// Pruned is called after each retention sweep with how many rows it deleted

@@ -54,9 +54,10 @@ func Test_ObserverFeedsTheCollectors(t *testing.T) {
 # TYPE outbox_publish_total counter
 outbox_publish_total{result="error",topic="orders"} 1
 outbox_publish_total{result="ok",topic="orders"} 1
-# HELP outbox_listener_up 1 when the LISTEN connection is established, 0 when it is not.
-# TYPE outbox_listener_up gauge
-outbox_listener_up 1
+# HELP outbox_listener_transitions_total LISTEN connection transitions, by the state entered.
+# TYPE outbox_listener_transitions_total counter
+outbox_listener_transitions_total{to="down"} 1
+outbox_listener_transitions_total{to="up"} 1
 # HELP outbox_pruned_rows_total Rows deleted by the retention sweep.
 # TYPE outbox_pruned_rows_total counter
 outbox_pruned_rows_total 12
@@ -70,8 +71,41 @@ outbox_warnings_total{kind="retry_negative"} 1
 `)
 
 	require.NoError(t, testutil.GatherAndCompare(reg, expected,
-		"outbox_publish_total", "outbox_listener_up", "outbox_pruned_rows_total",
+		"outbox_publish_total", "outbox_listener_transitions_total", "outbox_pruned_rows_total",
 		"outbox_prune_failures_total", "outbox_warnings_total"))
+}
+
+// Both series start at zero and stay there until something actually changes.
+// That is the case the gauge got wrong and this suite never covered: the test
+// above drives the observer by hand through a failure and a recovery, which is
+// a sequence only a relay that has already broken produces. metrics.go argues
+// the shape; this pins it.
+//
+// The relay's half — that a healthy listener really does report nothing — is
+// held down by a sibling test in the root package. It cannot live here, since
+// this module's suite runs without a database on purpose.
+func Test_ListenerTransitionsStartAtZeroAndStayThere(t *testing.T) {
+	t.Parallel()
+
+	reg := prometheus.NewPedanticRegistry()
+
+	metrics, err := outboxprom.NewMetrics()
+	require.NoError(t, err)
+	require.NoError(t, reg.Register(metrics))
+
+	// The whole interaction a healthy relay has with this collector: none.
+	observer := metrics.Observer()
+	observer.Published(t.Context(), delivery("orders", 1), nil)
+
+	expected := strings.NewReader(`
+# HELP outbox_listener_transitions_total LISTEN connection transitions, by the state entered.
+# TYPE outbox_listener_transitions_total counter
+outbox_listener_transitions_total{to="down"} 0
+outbox_listener_transitions_total{to="up"} 0
+`)
+
+	require.NoError(t, testutil.GatherAndCompare(reg, expected, "outbox_listener_transitions_total"),
+		"a process that has never lost its listener must not look like one that has")
 }
 
 // Every advisory outboxer can send to Warned has to land on a label of its own,
@@ -494,7 +528,7 @@ func Test_Refusals(t *testing.T) {
 	t.Run("refuses a constant label that collides with a variable one", func(t *testing.T) {
 		t.Parallel()
 
-		for _, name := range []string{"topic", "result", "kind"} {
+		for _, name := range []string{"topic", "result", "kind", "to"} {
 			_, err := outboxprom.NewMetrics(outboxprom.WithConstLabels(prometheus.Labels{name: "x"}))
 			require.ErrorIs(t, err, outboxer.ErrInvalidConfig, "constant label %q collides", name)
 			require.Contains(t, err.Error(), name)

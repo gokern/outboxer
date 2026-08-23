@@ -48,8 +48,16 @@ const (
 	labelTopic  = "topic"
 	labelResult = "result"
 	labelKind   = "kind"
+	labelTo     = "to"
 
 	reservedLabelPrefix = "__"
+)
+
+// The two values labelTo takes. They are the whole domain: ListenerChanged
+// reports a connection that went or one that came back, and nothing else.
+const (
+	stateUp   = "up"
+	stateDown = "down"
 )
 
 const (
@@ -169,9 +177,9 @@ func WithConstLabels(labels prometheus.Labels) Option {
 				return invalidOption("constant label %q uses the %q prefix, which Prometheus reserves",
 					name, reservedLabelPrefix)
 
-			case name == labelTopic, name == labelResult, name == labelKind:
+			case name == labelTopic, name == labelResult, name == labelKind, name == labelTo:
 				return invalidOption("constant label %q is one this package sets per observation "+
-					"(%s, %s, %s)", name, labelTopic, labelResult, labelKind)
+					"(%s, %s, %s, %s)", name, labelTopic, labelResult, labelKind, labelTo)
 			}
 		}
 
