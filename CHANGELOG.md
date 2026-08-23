@@ -36,6 +36,36 @@ versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   Reported against 0.4.0, where it surfaced in a consumer's suite as a delivery test
   that failed roughly one run in four under `-race`.
 
+### Changed
+
+- **`outboxprom` reports the listener as transitions, and the `outbox_listener_up` gauge is
+  gone.** It read `0` for the whole life of a healthy process, which is the opposite of what
+  its own help text promised. `Observer.ListenerChanged` reports *changes*, and a first
+  successful dial is not one: a relay whose listener came up on its first dial and stayed up
+  never calls it, so the gauge never left zero. Only a relay that had already failed and
+  recovered ever showed `1` — the metric was 1 exactly when the listener had proved it could
+  break.
+
+  In its place is `outbox_listener_transitions_total{to="up"|"down"}`, both series initialised
+  to zero so `rate` has something to work from. A counter has no initial level to get wrong:
+  zero says nothing has happened to this connection. `WithConstLabels` refuses a constant label
+  named `to` now, for the same reason it already refuses `topic`, `result` and `kind`.
+
+  **Alert on latency, not on this.** `outbox_publish_lag_seconds` is what says whether the push
+  path works, because it measures the outcome rather than the mechanism: with notifications
+  arriving, deliveries land under the first bucket boundary of 50ms, and polling at the default
+  interval lands three orders of magnitude higher. It also catches the two ways a push path dies
+  with the connection perfectly healthy — a LISTEN session opened through a transaction-pooling
+  pooler, and a missing NOTIFY trigger — neither of which any connection-level signal can see.
+  One caveat worth knowing: the lag is measured from `created_at`, so a producer that schedules
+  rows with `Message.Delay` mixes those delays into the same histogram.
+
+- **`Observer.ListenerChanged` says in its doc that a first successful dial is not reported.**
+  The behaviour is unchanged and deliberate, since a first success is a recovery from nothing,
+  but it was stated only in a comment inside the package. A caller deriving a level from the
+  silence gets a healthy relay backwards, which is exactly what the gauge above did. The README
+  says it too, and a test now holds it down instead of leaving it to a comment.
+
 ## 0.4.0 — 2026-08-18
 
 Panic recovery moves to [`github.com/gokern/panics`](https://github.com/gokern/panics).

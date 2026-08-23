@@ -317,7 +317,7 @@ Every field is optional.
 |---|---|
 | `Published` | after every publish attempt, successful or not |
 | `Woke` | every time the relay stops waiting, the LISTEN session coming up included; the idle heartbeat |
-| `ListenerChanged` | once per LISTEN connection transition; `nil` means recovered |
+| `ListenerChanged` | once per LISTEN connection transition; `nil` means recovered. A first successful dial is not a transition and is not reported, so silence is not "down" |
 | `Pruned` | after each retention sweep, with the row count |
 | `Warned` | non-fatal advisories: a poll interval at or above the lease, a clamped negative retry, a row whose headers could not be decoded, a deferral the database refused, a failed read of when the next row falls due, a callback of yours that panicked |
 
@@ -413,7 +413,7 @@ Wiring your own instead is a table lookup:
 | publish duration | wrap your own `PublishFunc`; the package is not involved |
 | insert-to-publish lag | `time.Since(delivery.CreatedAt)` in `Published`, on success only |
 | attempt distribution | `delivery.Attempt` |
-| listener up/down | `Observer.ListenerChanged`; the degrade is otherwise silent |
+| listener transitions | `Observer.ListenerChanged` as a counter, never a gauge; a level built from it reads "down" on a healthy relay |
 | retention volume and failures | `Observer.Pruned` |
 | advisories by class | `Observer.Warned` with `errors.Is` — never by message text |
 | backlog, age, worst attempt count | `Sampler.Stats` |

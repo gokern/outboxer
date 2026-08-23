@@ -211,6 +211,46 @@ func Test_Listener(t *testing.T) {
 		})
 	})
 
+	// Every test above breaks the listener before watching it come back, so every
+	// recovery they see is a recovery from something. None of them covers the
+	// other half, which is that a dial succeeding first time announces nothing
+	// at all.
+	//
+	// That silence reads as "down" to anyone who does not know better, and
+	// outboxprom's listener gauge read it that way for a release. Which is why
+	// it is pinned here instead of left to a comment in listen.go.
+	t.Run("a listener that comes up first try reports nothing", func(t *testing.T) {
+		t.Parallel()
+
+		withTable(t, 3, func(pool *pgxpool.Pool, table string) {
+			published := newCollector(nil)
+
+			var changes []error
+
+			relay, err := outboxer.NewRelay(pool, published.Publish,
+				outboxer.WithTable(table),
+				outboxer.WithPollInterval(pollNever),
+				outboxer.WithDialer(dialer),
+				outboxer.WithObserver(outboxer.Observer{
+					ListenerChanged: func(err error) { changes = append(changes, err) },
+				}))
+			require.NoError(t, err)
+
+			stop := relayRun(t, relay)
+
+			// The listener has to be demonstrably up, or this asserts nothing:
+			// a dialer that never connected reports nothing either. With the
+			// poll thirty seconds out, only a delivered notification can
+			// produce this row.
+			require.NoError(t, insertInto(t, pool, table, dueNow()))
+
+			eventually(t, "the NOTIFY path is live", func() bool { return published.count() == 1 })
+
+			require.NoError(t, stop())
+			require.Empty(t, changes, "the first successful dial announced itself")
+		})
+	})
+
 	// Run owns the connection its dialer returns, so a dialer that cannot connect
 	// must degrade to polling instead of stopping the relay.
 	t.Run("a broken dialer degrades to polling and is reported", func(t *testing.T) {

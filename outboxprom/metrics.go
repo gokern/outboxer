@@ -24,10 +24,19 @@ import (
 // together with nothing to tell them apart; give each its own and separate them
 // with [WithConstLabels], or accept the sum deliberately.
 type Metrics struct {
-	publishes  *prometheus.CounterVec
-	lag        prometheus.Histogram
-	attempts   prometheus.Histogram
-	listenerUp prometheus.Gauge
+	publishes *prometheus.CounterVec
+	lag       prometheus.Histogram
+	attempts  prometheus.Histogram
+
+	// listenerTransitions counts what ListenerChanged reports, and is a counter
+	// because that callback reports changes. A gauge would need an initial
+	// value, and the one state the callback never announces is the state a
+	// healthy relay is in: a listener that came up on its first dial and stayed
+	// up produces no callback at all, so a gauge fed from it reads "down" for
+	// the life of the process. This package shipped that. Zero on a counter
+	// says what it means — nothing has happened to this connection.
+	listenerTransitions *prometheus.CounterVec
+
 	pruned     prometheus.Counter
 	pruneFails prometheus.Counter
 	warnings   *prometheus.CounterVec
@@ -74,11 +83,7 @@ func NewMetrics(opts ...Option) (*Metrics, error) {
 			Buckets:     cfg.attemptBuckets,
 		}),
 
-		listenerUp: prometheus.NewGauge(prometheus.GaugeOpts{
-			Namespace: cfg.namespace, Subsystem: "", Name: "listener_up",
-			Help:        "1 when the LISTEN connection is established, 0 when it is not.",
-			ConstLabels: cfg.constLabels,
-		}),
+		listenerTransitions: newListenerTransitions(cfg),
 
 		pruned: prometheus.NewCounter(prometheus.CounterOpts{
 			Namespace: cfg.namespace, Subsystem: "", Name: "pruned_rows_total",
@@ -98,6 +103,26 @@ func NewMetrics(opts ...Option) (*Metrics, error) {
 			ConstLabels: cfg.constLabels,
 		}, []string{labelKind}),
 	}, nil
+}
+
+// newListenerTransitions builds the listener counter with both of its series
+// already present, at zero.
+//
+// A counter that springs into being the first time it fires gives rate nothing
+// to work from. It also leaves two unrelated states looking identical on a
+// dashboard: a connection nothing has ever happened to, and a collector nobody
+// registered.
+func newListenerTransitions(cfg config) *prometheus.CounterVec {
+	transitions := prometheus.NewCounterVec(prometheus.CounterOpts{
+		Namespace: cfg.namespace, Subsystem: "", Name: "listener_transitions_total",
+		Help:        "LISTEN connection transitions, by the state entered.",
+		ConstLabels: cfg.constLabels,
+	}, []string{labelTo})
+
+	transitions.WithLabelValues(stateUp)
+	transitions.WithLabelValues(stateDown)
+
+	return transitions
 }
 
 // Observer is the value to hand to [outboxer.WithObserver].
@@ -135,13 +160,12 @@ func (m *Metrics) Observer() outboxer.Observer {
 		},
 
 		ListenerChanged: func(err error) {
+			to := stateUp
 			if err != nil {
-				m.listenerUp.Set(0)
-
-				return
+				to = stateDown
 			}
 
-			m.listenerUp.Set(1)
+			m.listenerTransitions.WithLabelValues(to).Inc()
 		},
 
 		Pruned: func(deleted int64, err error) {
@@ -163,7 +187,7 @@ func (m *Metrics) Describe(ch chan<- *prometheus.Desc) {
 	m.publishes.Describe(ch)
 	m.lag.Describe(ch)
 	m.attempts.Describe(ch)
-	m.listenerUp.Describe(ch)
+	m.listenerTransitions.Describe(ch)
 	m.pruned.Describe(ch)
 	m.pruneFails.Describe(ch)
 	m.warnings.Describe(ch)
@@ -174,7 +198,7 @@ func (m *Metrics) Collect(ch chan<- prometheus.Metric) {
 	m.publishes.Collect(ch)
 	m.lag.Collect(ch)
 	m.attempts.Collect(ch)
-	m.listenerUp.Collect(ch)
+	m.listenerTransitions.Collect(ch)
 	m.pruned.Collect(ch)
 	m.pruneFails.Collect(ch)
 	m.warnings.Collect(ch)
