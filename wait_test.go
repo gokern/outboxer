@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/stretchr/testify/require"
 
@@ -128,6 +129,68 @@ func Test_Wait(t *testing.T) {
 			// floor; unbounded it would be two hundred.
 			require.Less(t, woke.Load(), int64(10),
 				"the grace on the due lookup became a spin: %d wake-ups in 2s", woke.Load())
+		})
+	})
+
+	// A wait is sound only while the LISTEN session that could contradict it has
+	// been registered continuously since before the claim. At start-up it has
+	// not: Run puts the listener on a goroutine of its own and goes straight
+	// into the drain loop, so the first claim, the due lookup and the wait all
+	// happen while the dial is still in flight. A row committed in that window
+	// is too late for the claim's snapshot and too early for LISTEN, and
+	// nothing wakes the relay until the poll tick — a whole poll interval on
+	// every process start, reported by nothing.
+	//
+	// The dialer here stretches the window from the handshake's few
+	// milliseconds to two seconds. That is what makes this a test rather than a
+	// race it would lose most of the time.
+	t.Run("a row committed while the listener is still dialling does not wait out the poll", func(t *testing.T) {
+		t.Parallel()
+
+		withTable(t, 3, func(pool *pgxpool.Pool, table string) {
+			const (
+				dialFor = 2 * time.Second
+
+				// Long enough that the relay's first pass is behind us, short
+				// enough to still be inside the dial. A row inserted before
+				// that claim would simply be found by it, and the window this
+				// test exists for would never open.
+				armed = 400 * time.Millisecond
+			)
+
+			published := newCollector(nil)
+			warned := newWarnings(t)
+
+			relay, err := outboxer.NewRelay(pool, published.Publish,
+				outboxer.WithTable(table),
+				outboxer.WithPollInterval(pollNever),
+				outboxer.WithDialer(func(ctx context.Context) (*pgx.Conn, error) {
+					select {
+					case <-ctx.Done():
+						return nil, ctx.Err()
+					case <-time.After(dialFor):
+					}
+
+					return pgx.Connect(ctx, testDSN)
+				}),
+				outboxer.WithObserver(outboxer.Observer{Warned: warned.observe}))
+			require.NoError(t, err)
+
+			stop := relayRun(t, relay)
+
+			time.Sleep(armed)
+
+			require.NoError(t, insertInto(t, pool, table, dueNow()))
+
+			// The notification for this row went nowhere, so nothing but the
+			// relay noticing its own subscription can deliver it before the
+			// poll tick, and the poll tick is further out than this waits.
+			eventually(t, "the row waited out the poll interval instead of the dial", func() bool {
+				return published.count() == 1
+			})
+
+			require.NoError(t, stop())
+			warned.none(t)
 		})
 	})
 }
