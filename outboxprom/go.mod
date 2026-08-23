@@ -3,7 +3,7 @@ module github.com/gokern/outboxer/outboxprom
 go 1.26
 
 require (
-	github.com/gokern/outboxer v0.4.0
+	github.com/gokern/outboxer v0.5.0
 	github.com/gokern/panics v1.0.0
 	github.com/jackc/pgx/v5 v5.10.0
 	github.com/prometheus/client_golang v1.24.1
