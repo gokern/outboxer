@@ -46,9 +46,15 @@ type Observer struct {
 	Published func(ctx context.Context, delivery Delivery, err error)
 
 	// Woke is called every time the relay stops waiting, whatever woke it: a
-	// notification, the poll tick, a deferral coming due, or the run ending. It
-	// is the relay's idle heartbeat: it says the wait loop is turning, and
-	// nothing about whether there was work.
+	// notification, the poll tick, a deferral coming due, the LISTEN session
+	// coming up, or the run ending. It is the relay's idle heartbeat: it says
+	// the wait loop is turning, and nothing about whether there was work.
+	//
+	// A LISTEN transition produces a beat of its own, on a pass that did not
+	// wait at all: the relay claims straight away rather than sleep on a
+	// conclusion its subscription was not covering. One beat per transition and
+	// sometimes two, so a rate alert on this reads a little higher from a relay
+	// whose session flaps.
 	Woke func()
 
 	// ListenerChanged is called on each LISTEN/NOTIFY connection transition,

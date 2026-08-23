@@ -110,6 +110,15 @@ func (r *Relay) openSession(ctx context.Context, session *listener) {
 // failSession drops the session so the next pass re-dials, reporting the
 // degrade once.
 func (r *Relay) failSession(ctx context.Context, session *listener, err error) {
+	// The subscription is gone, and the notifications pgx had buffered on that
+	// connection go with it. Counted for the loss and not only for the arrival,
+	// because a row committed just before the break had its notification
+	// delivered into that buffer and destroyed with it, while the claim that
+	// was running took its snapshot too early to see it. Nothing is left to
+	// deliver that row, so a moved count is the only thing that sends the
+	// dispatcher back to look for it.
+	r.listenEpoch.Add(1)
+
 	if !session.down {
 		session.down = true
 
@@ -182,6 +191,18 @@ func (r *Relay) dial(ctx context.Context) (*pgx.Conn, error) {
 		closeConn(ctx, conn)
 
 		return nil, fmt.Errorf("outboxer: listen on %s: %w", r.cfg.table, err)
+	}
+
+	// The subscription exists from here, so the dispatcher is told here and not
+	// by the caller: anything between the registration and the count is time
+	// the wait would still treat as covered. The state first, then the wake-up,
+	// so a dispatcher woken by it cannot read a subscription that has not been
+	// counted yet.
+	r.listenEpoch.Add(1)
+
+	select {
+	case r.subscribed <- struct{}{}:
+	default:
 	}
 
 	return conn, nil

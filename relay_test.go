@@ -111,9 +111,14 @@ func TestRelay_Run(t *testing.T) {
 
 			stop := relayRun(t, relay)
 
-			// Let the relay reach its wait before there is anything to notify about.
+			// Let the relay reach its wait before there is anything to notify
+			// about. The subscription coming up is worth a pass of its own,
+			// because the rows committed while it was being dialled are found
+			// by claiming and by nothing else, and worth two when the dispatcher
+			// reads the count in the gap before the wake-up is sent. Anything
+			// above that is the relay polling a table it was told to listen to.
 			time.Sleep(500 * time.Millisecond)
-			require.Equal(t, int64(0), woke.Load(), "still waiting, with nothing to do")
+			require.LessOrEqual(t, woke.Load(), int64(2), "still waiting, with nothing to do")
 
 			require.NoError(t, insertInto(t, pool, table, dueNow()))
 

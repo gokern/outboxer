@@ -106,6 +106,7 @@ func Test_Listener(t *testing.T) {
 		withTable(t, 3, func(pool *pgxpool.Pool, table string) {
 			dials := &atomic.Int64{}
 			changes := &atomic.Int64{}
+			woke := &atomic.Int64{}
 
 			// The session's own lifetime and the poll cadence are two orders of
 			// magnitude apart on purpose. Whichever of them paces the re-dial loop
@@ -141,6 +142,7 @@ func Test_Listener(t *testing.T) {
 				}),
 				outboxer.WithObserver(outboxer.Observer{
 					ListenerChanged: func(error) { changes.Add(1) },
+					Woke:            func() { woke.Add(1) },
 				}))
 			require.NoError(t, err)
 
@@ -155,6 +157,15 @@ func Test_Listener(t *testing.T) {
 			require.Less(t, changes.Load(), int64(16),
 				"transitions were reported per attempt: %d in 4s", changes.Load())
 			require.Positive(t, dials.Load(), "the listener never connected at all")
+
+			// The dispatcher is woken by a subscription coming up, and again by
+			// the loss when that lands while it is between waits, so a flap
+			// reaches it too and the cadence has to bound it there as well. Two
+			// per cycle at the dial count the assertion above allows, plus the
+			// poll ticks in the window; paced by the session's own lifetime it
+			// would be eighty.
+			require.Less(t, woke.Load(), int64(20),
+				"a flapping session woke the dispatcher in a loop: %d wake-ups in 4s", woke.Load())
 		})
 	})
 

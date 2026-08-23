@@ -45,6 +45,25 @@ type Relay struct {
 	// That is the exact rounding the deferral exists to avoid.
 	deferred chan struct{}
 
+	// subscribed wakes a dispatcher that armed its wait before the LISTEN
+	// session came up. Its own channel and not notified: that one says the
+	// database announced a row, this one says the relay can hear such an
+	// announcement at last, and that the rows from before it could are still
+	// sitting in the table.
+	subscribed chan struct{}
+
+	// listenEpoch changes on every transition of the LISTEN session, once when
+	// a subscription is registered and once when one is lost. The value means
+	// nothing on its own; only whether it is the same either side of a claim
+	// does, and that is what says whether the session covered that claim.
+	//
+	// A counter and not a flag, because a session that went and came back
+	// between two reads of a flag looks exactly like one that never lapsed.
+	// It is the predicate to the channel's signal. The channel wakes a
+	// dispatcher that is already asleep; this one stops a dispatcher that is
+	// not from going to sleep. Neither does the other's job.
+	listenEpoch atomic.Uint64
+
 	// inflight tracks publisher goroutines so shutdown can wait for them.
 	inflight sync.WaitGroup
 
@@ -98,20 +117,22 @@ func NewRelay(pool *pgxpool.Pool, publish PublishFunc, opts ...RelayOption) (*Re
 	}
 
 	relay := &Relay{
-		pool:      pool,
-		publish:   publish,
-		cfg:       cfg,
-		stmt:      newStatements(cfg.table),
-		started:   atomic.Bool{},
-		active:    atomic.Int64{},
-		slotFreed: make(chan struct{}, 1),
-		notified:  make(chan struct{}, 1),
-		deferred:  make(chan struct{}, 1),
-		inflight:  sync.WaitGroup{},
-		stop:      nil,
-		mu:        sync.Mutex{},
-		fatalErr:  nil,
-		nextLocal: time.Time{},
+		pool:        pool,
+		publish:     publish,
+		cfg:         cfg,
+		stmt:        newStatements(cfg.table),
+		started:     atomic.Bool{},
+		active:      atomic.Int64{},
+		slotFreed:   make(chan struct{}, 1),
+		notified:    make(chan struct{}, 1),
+		deferred:    make(chan struct{}, 1),
+		subscribed:  make(chan struct{}, 1),
+		listenEpoch: atomic.Uint64{},
+		inflight:    sync.WaitGroup{},
+		stop:        nil,
+		mu:          sync.Mutex{},
+		fatalErr:    nil,
+		nextLocal:   time.Time{},
 	}
 
 	if cfg.pollInterval >= cfg.lease {
@@ -219,6 +240,11 @@ func (r *Relay) Run(ctx context.Context) error {
 // relay alternates draining and waiting until the context is cancelled.
 func (r *Relay) relay(ctx context.Context) error {
 	for {
+		// Read before the claim and not after it: a subscription registered
+		// later than this did not cover the snapshot the claim is about to
+		// take, and the wait that follows must not sleep as though it had.
+		epoch := r.listenEpoch.Load()
+
 		err := r.dispatch(ctx)
 		if err != nil {
 			return err
@@ -228,7 +254,7 @@ func (r *Relay) relay(ctx context.Context) error {
 			return nil //nolint:nilerr // cancellation is a clean stop
 		}
 
-		r.wait(ctx)
+		r.wait(ctx, epoch)
 
 		if ctx.Err() != nil {
 			return nil //nolint:nilerr // cancellation is a clean stop
