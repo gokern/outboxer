@@ -34,6 +34,7 @@ linters:
     - gomodguard # deprecated; gomodguard_v2 is already on via default: all
     - wsl # deprecated alias of wsl_v5, which default: all still enables
     - wsl_v5 # whitespace cuddling rules are too noisy for this codebase
+    - exhaustruct # deprecated; exhaustruct_v5 is already on via default: all
     # This package wraps where an error crosses its API, not where pgx returns
     # one: claim and the other internal helpers pass through, and dispatch adds
     # "outboxer: claim from <table>". wrapcheck cannot see that boundary and
@@ -138,7 +139,7 @@ linters:
       # would state the opposite of what is meant.
       - path: outboxprom/
         linters:
-          - exhaustruct
+          - exhaustruct_v5
         text: "prometheus\\.(Counter|Gauge|Histogram|Summary)Opts"
 
       # A nested module has to build against the working tree, or a change here
@@ -166,7 +167,7 @@ linters:
         linters:
           - cyclop # a grouped test's branches belong to its subtests
           - err113 # a test builds the error it is about to hand to a callback
-          - exhaustruct # a test fills the fields under test and leaves the rest zero
+          - exhaustruct_v5 # a test fills the fields under test and leaves the rest zero
           - funlen # the table is the test; TestProducer_Insert is 350 lines of it
           - gochecknoglobals # TestMain has to stash the DSN and the embedded DDL somewhere
           - goconst # repeated topic literals ("evt", "user.created") read better inline
