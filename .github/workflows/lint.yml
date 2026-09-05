@@ -42,7 +42,7 @@ jobs:
           # release able to turn CI red on an untouched tree (a new check, or a
           # linter deprecation under `default: all`). Bump this on purpose,
           # together with any config/code changes the new version demands.
-          version: v2.12.2
+          version: v2.13.2
           working-directory: ${{ matrix.module }}
 
   tidy:
