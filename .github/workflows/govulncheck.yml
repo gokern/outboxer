@@ -27,9 +27,17 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
 
-      - name: govulncheck
-        uses: golang/govulncheck-action@v1
+      - name: Set up Go
+        uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
-          repo-checkout: false
-          work-dir: ${{ matrix.module }}
+          check-latest: true
+
+      - name: Set up mise
+        uses: jdx/mise-action@v5
+        with:
+          version: 2026.9.17 # pinned; bump by hand
+
+      - name: govulncheck
+        working-directory: ${{ matrix.module }}
+        run: govulncheck ./...

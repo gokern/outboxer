@@ -4,7 +4,7 @@ go 1.26
 
 require (
 	github.com/gokern/panics v1.0.0
-	github.com/jackc/pgx/v5 v5.10.0
+	github.com/jackc/pgx/v5 v5.11.0
 	github.com/stretchr/testify v1.12.1
 	go.uber.org/goleak v1.3.0
 )

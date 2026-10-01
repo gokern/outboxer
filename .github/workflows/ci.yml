@@ -55,6 +55,11 @@ jobs:
           go-version-file: go.mod
           check-latest: true
 
+      - name: Set up mise
+        uses: jdx/mise-action@v5
+        with:
+          version: 2026.9.17 # pinned; bump by hand
+
       - name: Download modules
         run: go mod download
 
@@ -70,9 +75,7 @@ jobs:
       - name: Test with race and coverage
         env:
           POSTGRES_URL: postgres://postgres:postgres@127.0.0.1:5432/outboxer_test?sslmode=disable
-        # Shuffled: the suite shares one database, so a test that leaves state
-        # behind changes what the next one measures. A fixed order hides that.
-        run: go test -race -shuffle=on -covermode=atomic -coverprofile=coverage.out ./...
+        run: mise run test
 
       - name: Report coverage
         run: go tool cover -func=coverage.out | tail -1
