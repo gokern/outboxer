@@ -1,0 +1,124 @@
+# outboxer — local development tooling.
+#
+# The tests need a real Postgres and will FAIL, not skip, without one: a suite
+# that goes green by skipping is a suite that reports coverage it does not
+# have. `mise run db` starts a throwaway one; CI runs the suite against every
+# supported major.
+#
+# The Go version is deliberately not pinned here: go.mod already declares the
+# minimum supported version and CI reads it. Bump [tools] by hand — Dependabot
+# does not read this file.
+
+[tools]
+golangci-lint = "2.14.0"
+"go:golang.org/x/vuln/cmd/govulncheck" = "1.8.0"
+
+[tasks.test]
+description = "Run the tests with the race detector and coverage (needs a Postgres)"
+# Shuffled on purpose: every test owns its table, but they share one database,
+# and a test that leaves a trigger or a function behind changes what the next
+# one measures. A fixed order hides that until the day somebody adds a test.
+#
+# An already-running POSTGRES_URL wins over the default, which is what CI
+# relies on; override DB_PORT and DB_NAME together to move the default.
+# GO_TEST overrides the runner (through sh -ec, so a quoted "-run '^X$'"
+# parses the way it reads); POSIX shell only — this repo's CI is Linux-only.
+# The outboxprom pass needs no database: the collector is driven through a
+# fake Querier.
+run = '''
+: "${DB_PORT:=15433}"
+: "${DB_NAME:=outboxer_test}"
+export POSTGRES_URL="${POSTGRES_URL:-postgres://postgres:postgres@127.0.0.1:${DB_PORT}/${DB_NAME}?sslmode=disable}"
+: "${GO_TEST:=go test -race -shuffle=on}"
+sh -ec "$GO_TEST -covermode=atomic -coverprofile=coverage.out ./..."
+cd outboxprom && sh -ec "$GO_TEST -covermode=atomic -coverprofile=coverage.out ./..."
+'''
+
+[tasks.db]
+description = "Start a throwaway Postgres for the tests"
+# Override DB_IMAGE and DB_PORT to reproduce one leg of the CI matrix:
+# DB_IMAGE=postgres:14-alpine DB_PORT=15444 mise run db
+run = '''
+: "${DB_PORT:=15433}"
+: "${DB_NAME:=outboxer_test}"
+: "${DB_IMAGE:=postgres:17-alpine}"
+: "${DB_CONTAINER:=outboxer-test-pg}"
+docker run -d --rm --name "$DB_CONTAINER" \
+  -p "$DB_PORT:5432" \
+  -e POSTGRES_USER=postgres \
+  -e POSTGRES_PASSWORD=postgres \
+  -e POSTGRES_DB="$DB_NAME" \
+  "$DB_IMAGE"
+until docker exec "$DB_CONTAINER" pg_isready -q -U postgres; do sleep 0.2; done
+echo "POSTGRES_URL=postgres://postgres:postgres@127.0.0.1:${DB_PORT}/${DB_NAME}?sslmode=disable"
+'''
+
+[tasks.db-stop]
+description = "Stop the throwaway Postgres"
+run = 'docker stop "${DB_CONTAINER:-outboxer-test-pg}"'
+
+[tasks.test-pgbouncer]
+description = "Run the pooler tests against a real PgBouncer (needs PGBOUNCER_URL and DIRECT_URL)"
+run = '''
+: "${DB_PORT:=15433}"
+: "${DB_NAME:=outboxer_test}"
+export POSTGRES_URL="${POSTGRES_URL:-postgres://postgres:postgres@127.0.0.1:${DB_PORT}/${DB_NAME}?sslmode=disable}"
+go test -race -count=1 -run 'Pooler' -v ./...
+'''
+
+# golangci-lint, go test and go mod tidy all stop at the module boundary, so
+# every multi-module task runs a second pass inside outboxprom.
+[tasks.lint]
+description = "Run golangci-lint over both modules"
+run = [
+  "golangci-lint run ./...",
+  "cd outboxprom && golangci-lint run ./...",
+]
+
+[tasks.fmt]
+description = "Apply the formatters configured in .golangci.yaml, in both modules"
+run = [
+  "golangci-lint fmt ./...",
+  "cd outboxprom && golangci-lint fmt ./...",
+]
+
+[tasks.tidy]
+description = "Check both go.mod files are tidy"
+# -diff is non-mutating and independent of the commit state: it exits
+# non-zero exactly when a tidy would change something.
+run = [
+  "go mod tidy -diff",
+  "cd outboxprom && go mod tidy -diff",
+]
+
+[tasks.vuln]
+description = "Scan both modules for known vulnerabilities"
+run = [
+  "govulncheck ./...",
+  "cd outboxprom && govulncheck ./...",
+]
+
+# The combination the replace hides. Every check above builds outboxprom
+# against this working tree; an adopter builds it against the version its
+# require names, and nothing else here ever compiles that pair. Run it before
+# tagging the module.
+[tasks.release-check]
+description = "Build outboxprom against the published root its go.mod requires"
+run = '''
+ver=$(cd outboxprom && go list -m github.com/gokern/outboxer | awk '{print $2}')
+test -n "$ver" || { echo "outboxprom has no require for github.com/gokern/outboxer"; exit 1; }
+echo "building outboxprom against the published github.com/gokern/outboxer $ver"
+tmp=$(mktemp -d) && trap 'rm -rf "$tmp"' EXIT || exit 1
+cp -R outboxprom/. "$tmp" && cd "$tmp" || exit 1
+go mod edit -dropreplace=github.com/gokern/outboxer
+export GOFLAGS=-mod=mod
+go build ./... && go vet ./... && go test -race ./...
+'''
+
+[tasks.check]
+description = "Everything CI runs before merge"
+# Sequential, not `depends`: mise runs dependencies in parallel, and a
+# suite that asserts on real elapsed time should not compete with lint and
+# govulncheck for the CPU. tidy runs before test so an untidy module fails
+# fast instead of after the slowest check.
+run = "mise run lint && mise run tidy && mise run test && mise run vuln"

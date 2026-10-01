@@ -26,7 +26,7 @@ import (
 // query, and drops asynchronous notifications on the floor. Only the real thing
 // does those.
 //
-//	make test-pgbouncer PGBOUNCER_URL=... DIRECT_URL=...
+//	PGBOUNCER_URL=... DIRECT_URL=... mise run test-pgbouncer
 //
 // DIRECT_URL must reach the same database without going through the pooler. It
 // is what the DDL runs on and what a correctly wired LISTEN session dials.

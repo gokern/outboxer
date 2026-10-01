@@ -73,8 +73,8 @@ func mustSetUp() {
 		fail("POSTGRES_URL is not set.\n\n" +
 			"These tests exercise a real Postgres and fail rather than skip without one.\n" +
 			"Start a throwaway server and run them against it:\n\n" +
-			"    make db\n" +
-			"    make test\n\n" +
+			"    mise run db\n" +
+			"    mise run test\n\n" +
 			"The database is used destructively: the suite drops and recreates its own\n" +
 			"tables on every run, so point POSTGRES_URL at one it may own outright.\n")
 	}

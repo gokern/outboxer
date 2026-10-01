@@ -21,3 +21,12 @@ Thumbs.db
 *.swp
 *.swo
 *~
+
+# Assistant working files that live in this tree but are not part of the module
+CLAUDE.md
+docs/superpowers/
+**/.claude/
+**/.superpowers/
+
+# Local mise overrides: user-specific tool/task tweaks, never part of the module
+/mise.local.toml

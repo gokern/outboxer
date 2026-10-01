@@ -226,7 +226,7 @@ connection that does not come from the pool.
 PgBouncer and friends: the claim, mark, defer, prune and insert paths all work, whether pgx
 prepares its statements or runs in `exec` mode where no parameter's column type is ever
 resolved. That is verified against a real PgBouncer in transaction mode and not only
-simulated; `make test-pgbouncer` runs it against yours. If your pooler predates PgBouncer
+simulated; `mise run test-pgbouncer` runs it against yours. If your pooler predates PgBouncer
 1.21 it cannot route prepared statements at all, and pgx has to be put in `exec` mode for
 reasons that have nothing to do with this package.
 
@@ -449,16 +449,16 @@ Needs a Postgres the test suite may own outright, since it drops and recreates i
 every run.
 
 ```bash
-make db               # a throwaway Postgres on port 15433
-make test             # go test -race -shuffle=on
-make lint
-make test-outboxprom  # the outboxprom module; needs no database
-make check            # lint, test, test-outboxprom, vuln
+mise run db               # a throwaway Postgres on port 15433
+mise run test             # go test -race -shuffle=on; root needs the database,
+                          # the outboxprom pass does not
+mise run lint
+mise run check            # lint, tidy, test, vuln
 ```
 
-`make` on its own lists the targets. `make db` takes `DB_IMAGE` and `DB_PORT`, which is how
-one leg of the CI matrix is reproduced locally:
-`make db DB_IMAGE=postgres:14-alpine DB_PORT=15444`.
+`mise tasks` lists everything. `mise run db` honours `DB_IMAGE` and `DB_PORT` from the
+environment, which is how one leg of the CI matrix is reproduced locally:
+`DB_IMAGE=postgres:14-alpine DB_PORT=15444 mise run db`.
 
 `outboxprom` is a module of its own, so nothing at the root reaches it: `go test
 ./...`, `go mod tidy` and `golangci-lint run` all stop at the module boundary, and CI runs
@@ -475,7 +475,7 @@ adopter who asks for a newer one gets the newer one, so it does not move with ev
 here.
 
 Nothing in this repository ever compiles the pair an adopter gets, and CI cannot: while a
-change to both sides is unreleased, that pair is expected not to build. `make release-check`
+change to both sides is unreleased, that pair is expected not to build. `mise run release-check`
 compiles it in a copy with the replace dropped. Run it before tagging the module.
 
 Module versions are tags of the form `outboxprom/vX.Y.Z`. The directory prefix is not

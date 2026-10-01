@@ -35,26 +35,26 @@ jobs:
           go-version-file: go.mod
           check-latest: true
 
+      - name: Set up mise
+        uses: jdx/mise-action@v5
+        with:
+          version: 2026.9.17 # pinned; bump by hand
+
       - name: golangci-lint
         uses: golangci/golangci-lint-action@v9
         with:
-          # Pinned deliberately: `latest` makes every upstream golangci-lint
-          # release able to turn CI red on an untouched tree (a new check, or a
-          # linter deprecation under `default: all`). Bump this on purpose,
-          # together with any config/code changes the new version demands.
-          version: v2.13.2
+          # Pinned in mise.toml [tools] — the same install CI and `mise run
+          # lint` use locally. Bump it there, on purpose, together with any
+          # config/code changes the new version demands.
+          install-mode: none
           working-directory: ${{ matrix.module }}
 
   tidy:
-    name: go mod tidy (${{ matrix.module }})
+    name: go mod tidy
     runs-on: ubuntu-latest
-    # Every module in the repo, because an untidy nested one is invisible from
-    # the root: go mod tidy does not cross a module boundary, the same reason
-    # the golangci job above is a matrix over the same list.
-    strategy:
-      fail-fast: false
-      matrix:
-        module: [".", "outboxprom"]
+    # Both modules, through the mise task that loops them: an untidy nested
+    # one is invisible from the root, because go mod tidy does not cross a
+    # module boundary either.
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -65,8 +65,10 @@ jobs:
           go-version-file: go.mod
           check-latest: true
 
-      - name: Check go.mod is tidy
-        working-directory: ${{ matrix.module }}
-        run: |
-          go mod tidy
-          git diff --exit-code -- go.mod go.sum
+      - name: Set up mise
+        uses: jdx/mise-action@v5
+        with:
+          version: 2026.9.17 # pinned; bump by hand
+
+      - name: Check both go.mod files are tidy
+        run: mise run tidy
