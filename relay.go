@@ -214,7 +214,7 @@ func (r *Relay) Run(ctx context.Context) error {
 		loops.Go(func() { r.listen(runCtx) })
 	}
 
-	if r.cfg.retention > 0 {
+	if r.cfg.retention > 0 || r.cfg.maxPublishedRows > 0 {
 		loops.Go(func() { r.pruneLoop(runCtx) })
 	}
 

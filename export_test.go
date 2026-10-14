@@ -1,6 +1,9 @@
 package outboxer
 
-import "time"
+import (
+	"context"
+	"time"
+)
 
 // This file is the suite's one white-box seam. Everything else lives in
 // outboxer_test and sees only what an adopter sees; what is re-exported here is
@@ -72,4 +75,15 @@ const PruneBatch = pruneBatch
 // to an hour, which no test that has to finish can wait to observe.
 func PruneIntervalForTest(r *Relay) time.Duration {
 	return r.cfg.pruneInterval
+}
+
+// PruneOnceForTest exposes a sweep without starting delivery, so tests can
+// hold row locks, cancel cleanup and inspect committed partial progress.
+func PruneOnceForTest(ctx context.Context, r *Relay) (int64, error) { return r.pruneOnce(ctx) }
+
+// CountStatementsForTest exposes count-boundary and batch SQL for planner tests.
+func CountStatementsForTest(table string) map[string]string {
+	stmt := newStatements(table)
+
+	return map[string]string{"cutoff": stmt.countCutoff, "batch": stmt.pruneCount}
 }

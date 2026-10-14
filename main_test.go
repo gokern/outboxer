@@ -30,6 +30,9 @@ import (
 //go:embed migration/0001_create_outbox.up.sql
 var referenceDDL string
 
+//go:embed migration/0002_index_published_order.up.sql
+var publishedOrderDDL string
+
 // referenceTable is the name the reference DDL creates, and the name both
 // constructors default to when no WithTable is given. Every uniquely-named test
 // table is this one with the identifiers substituted.
@@ -107,7 +110,7 @@ func fail(message string) {
 
 // schemaFor renders the reference DDL for a differently-named table.
 func schemaFor(table string) string {
-	return strings.ReplaceAll(referenceDDL, referenceTable, table)
+	return strings.ReplaceAll(referenceDDL+publishedOrderDDL, referenceTable, table)
 }
 
 // dropSchemaFor removes everything schemaFor created. The guards live here, in

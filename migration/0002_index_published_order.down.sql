@@ -1,0 +1,1 @@
+DROP INDEX outbox_published_order_idx;
