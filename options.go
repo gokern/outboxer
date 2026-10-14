@@ -359,7 +359,7 @@ func WithRetention(maxAge time.Duration) RelayOption {
 // not a bound on backlog, payload bytes or disk usage. WithRetention can remove
 // additional rows by age; count retention can remove rows before that age.
 //
-// Each sweep scans up to maxRows+1 published index entries to find its cutoff.
+// Each sweep scans up to maxRows+1 visible published index entries to find its cutoff.
 // Apply migration/0002_index_published_order.up.sql for ordered access.
 func WithMaxPublishedRows(maxRows int64) RelayOption {
 	return relayOption(func(cfg *relayConfig) error {
