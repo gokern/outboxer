@@ -56,10 +56,9 @@ func newStatements(table string) statements {
 // traffic: a broker outage defers the whole backlog at once, and Message.Delay
 // defers rows by design. SKIP LOCKED never promised ordering, so nothing is
 // given up.
-const claimTemplate = `UPDATE %[1]s
-   SET ready_at = clock_timestamp() + make_interval(secs => $1),
-       attempts = attempts + 1
- WHERE id IN (
+// Materialization fixes the candidate set for the whole statement. A legal
+// semi-join plan can otherwise rescan a limited subquery after each changed row.
+const claimTemplate = `WITH outboxer_batch AS MATERIALIZED (
        SELECT id
          FROM %[1]s
         WHERE published_at IS NULL
@@ -68,6 +67,10 @@ const claimTemplate = `UPDATE %[1]s
           FOR UPDATE SKIP LOCKED
         LIMIT $2
    )
+UPDATE %[1]s
+   SET ready_at = clock_timestamp() + make_interval(secs => $1),
+       attempts = attempts + 1
+ WHERE id IN (SELECT id FROM outboxer_batch)
 RETURNING id, attempts, topic, payload, headers, created_at`
 
 // markTemplate records a delivered row. The published_at IS NULL guard keeps it
@@ -86,8 +89,7 @@ const deferTemplate = `UPDATE %s
 // window. It touches only published rows, so it can never contend with the
 // claim, which sees only unpublished ones. SKIP LOCKED lets replicas sweeping
 // at the same time take disjoint batches.
-const pruneTemplate = `DELETE FROM %[1]s
- WHERE id IN (
+const pruneTemplate = `WITH outboxer_batch AS MATERIALIZED (
        SELECT id
          FROM %[1]s
         WHERE published_at IS NOT NULL
@@ -95,7 +97,9 @@ const pruneTemplate = `DELETE FROM %[1]s
         ORDER BY published_at
         LIMIT $2
           FOR UPDATE SKIP LOCKED
-   )`
+   )
+DELETE FROM %[1]s
+ WHERE id IN (SELECT id FROM outboxer_batch)`
 
 // nextDueTemplate reports when the next unpublished row falls due, asked once
 // when a claim comes back empty. It keeps Message.Delay and another process's
