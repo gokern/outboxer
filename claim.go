@@ -7,7 +7,7 @@ import "fmt"
 // identifier before it gets here, and that validation is what makes it safe to
 // interpolate.
 //
-// Every predicate that drives a scan compares against now(), never
+// Time predicates use now() or fixed sweep parameters, never
 // clock_timestamp(). clock_timestamp() is VOLATILE, so PostgreSQL will not use
 // it as an index bound: it starts at the head of the index and walks forward,
 // applying the comparison as a filter to every row it passes. Measured on a
@@ -27,20 +27,24 @@ import "fmt"
 // can take a lease and count an attempt indivisibly without this package ever
 // opening a transaction of its own.
 type statements struct {
-	claim   string
-	mark    string
-	deferTo string
-	prune   string
-	nextDue string
+	claim       string
+	mark        string
+	deferTo     string
+	prune       string
+	countCutoff string
+	pruneCount  string
+	nextDue     string
 }
 
 func newStatements(table string) statements {
 	return statements{
-		claim:   fmt.Sprintf(claimTemplate, table),
-		mark:    fmt.Sprintf(markTemplate, table),
-		deferTo: fmt.Sprintf(deferTemplate, table),
-		prune:   fmt.Sprintf(pruneTemplate, table),
-		nextDue: fmt.Sprintf(nextDueTemplate, table),
+		claim:       fmt.Sprintf(claimTemplate, table),
+		mark:        fmt.Sprintf(markTemplate, table),
+		deferTo:     fmt.Sprintf(deferTemplate, table),
+		prune:       fmt.Sprintf(pruneTemplate, table),
+		countCutoff: fmt.Sprintf(countCutoffTemplate, table),
+		pruneCount:  fmt.Sprintf(pruneCountTemplate, table),
+		nextDue:     fmt.Sprintf(nextDueTemplate, table),
 	}
 }
 
@@ -93,13 +97,29 @@ const pruneTemplate = `WITH outboxer_batch AS MATERIALIZED (
        SELECT id
          FROM %[1]s
         WHERE published_at IS NOT NULL
-          AND published_at < now() - make_interval(secs => $1)
-        ORDER BY published_at
+          AND published_at < $1
+        ORDER BY published_at, id
         LIMIT $2
           FOR UPDATE SKIP LOCKED
    )
 DELETE FROM %[1]s
  WHERE id IN (SELECT id FROM outboxer_batch)`
+
+// countCutoffTemplate returns the first row beyond the retained newest rows.
+// Locked rows still count: this read must not use SKIP LOCKED.
+const countCutoffTemplate = `SELECT published_at, id
+ FROM %s
+ WHERE published_at IS NOT NULL
+ ORDER BY published_at DESC, id DESC
+ OFFSET $1 LIMIT 1`
+
+const pruneCountTemplate = `WITH outboxer_batch AS MATERIALIZED (
+ SELECT id FROM %[1]s
+ WHERE published_at IS NOT NULL AND (published_at, id) <= ($1, $2)
+ ORDER BY published_at, id
+ LIMIT $3 FOR UPDATE SKIP LOCKED
+)
+DELETE FROM %[1]s WHERE id IN (SELECT id FROM outboxer_batch)`
 
 // nextDueTemplate reports when the next unpublished row falls due, asked once
 // when a claim comes back empty. It keeps Message.Delay and another process's

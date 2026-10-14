@@ -138,7 +138,13 @@ Three things beyond the table itself, in order of how much you need them:
 - **The `AFTER INSERT` trigger** calling `pg_notify` on the channel. Without it the relay
   polls, which is correct everywhere and slower only where latency is measured in tens of
   milliseconds. The channel name is the table name.
-- **`outbox_published_idx`**, only if you turn retention on.
+- **`outbox_published_idx`**, only if you turn age retention on.
+- **`outbox_published_order_idx`**, for count retention. Apply
+  [`migration/0002_index_published_order.up.sql`](migration/0002_index_published_order.up.sql)
+  after the reference schema. This partial B-tree orders published rows by
+  `(published_at, id)` and also serves age scans. The additive migration leaves
+  the original index in place. A normal index build blocks writers; schedule
+  its application before relays start or in an adopter-controlled maintenance window.
 
 ### Keep the two clocks close
 
@@ -200,11 +206,25 @@ read values back from: you already hold them.
 | `WithLease` | 60s | how long a claimed row stays undue |
 | `WithPublishTimeout` | 5s | one `PublishFunc` call |
 | `WithPollInterval` | 10s | how long the wait blocks without a notification |
-| `WithRetention` | 0 (off) | age at which a published row is deleted; a floor, not an exact age |
-| `WithPruneInterval` | 1h, or the retention window when shorter | how often retention sweeps; needs `WithRetention`, and refused if longer than the window |
+| `WithRetention` | 0 (off) | removes published rows older than this age |
+| `WithMaxPublishedRows` | 0 (off) | keeps at most this many newest published rows after an unobstructed sweep; pending rows are never deleted |
+| `WithPruneInterval` | 1h, or the retention window when shorter | how often cleanup sweeps; needs either retention policy, and refused if longer than an enabled age window |
 | `WithRetry` | one lease | when a failed row becomes due again |
 | `WithDialer` | none (poll-only) | how to open the dedicated LISTEN session |
 | `WithObserver` | none | everything the relay reports |
+
+Age and count retention work independently. When both are enabled, a row is
+eligible for deletion by either policy: count cleanup can remove rows before
+that age. Each sweep first removes old rows, then fixes one count cutoff and
+removes excess published rows in batches of 1000. Equal publication timestamps
+are ordered by ID. Locked eligible rows are revisited on a later sweep.
+
+The count limit is soft: publication can exceed it between sweeps or while
+cleanup is blocked. It does not cap unpublished backlog, payload bytes or
+filesystem usage. Each count cutoff lookup scans up to `maxRows + 1` visible
+published index entries; it is not constant-time. Choose the interval against
+measured publication and cleanup rates. PostgreSQL vacuum reclaims deleted
+space for reuse; deletion alone does not shrink database files.
 
 **No default is exported.** A caller who needs to compute with an interval, a liveness
 window say, should declare that interval and compute from what they declared. A number

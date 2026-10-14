@@ -118,16 +118,17 @@ type samplerConfig struct {
 // NewRelay validates it as a whole, which is the point: a setting that only
 // exists as a closure cannot be checked against the settings around it.
 type relayConfig struct {
-	table          string
-	dialer         DialFunc
-	maxConcurrency int
-	lease          time.Duration
-	publishTimeout time.Duration
-	pollInterval   time.Duration
-	retention      time.Duration
-	pruneInterval  time.Duration
-	retry          RetryFunc
-	observer       Observer
+	table            string
+	dialer           DialFunc
+	maxConcurrency   int
+	lease            time.Duration
+	publishTimeout   time.Duration
+	pollInterval     time.Duration
+	retention        time.Duration
+	maxPublishedRows int64
+	pruneInterval    time.Duration
+	retry            RetryFunc
+	observer         Observer
 
 	// stallAfter is how long every publish slot may stay occupied before the
 	// relay calls itself wedged. Computed, not configured: twice what one
@@ -352,11 +353,30 @@ func WithRetention(maxAge time.Duration) RelayOption {
 	})
 }
 
+// WithMaxPublishedRows limits retained published rows, keeping the newest by
+// (published_at, id). Zero disables the limit, which is the default. Pending
+// rows are never removed. Cleanup is periodic, so this is a soft row limit,
+// not a bound on backlog, payload bytes or disk usage. WithRetention can remove
+// additional rows by age; count retention can remove rows before that age.
+//
+// Each sweep scans up to maxRows+1 visible published index entries to find its cutoff.
+// Apply migration/0002_index_published_order.up.sql for ordered access.
+func WithMaxPublishedRows(maxRows int64) RelayOption {
+	return relayOption(func(cfg *relayConfig) error {
+		if maxRows < 0 {
+			return invalidConfig("max published rows %d is negative", maxRows)
+		}
+		cfg.maxPublishedRows = maxRows
+
+		return nil
+	})
+}
+
 // WithPruneInterval sets how often retention sweeps, with a leading sweep at
 // startup so a process that restarts more often than the interval still prunes.
 //
-// It requires WithRetention. Without a window there is nothing to sweep and the
-// loop never starts, so NewRelay refuses the pair rather than accepting a
+// It requires WithRetention or WithMaxPublishedRows. Without either policy the
+// loop never starts, so NewRelay refuses an interval rather than accepting a
 // setting that would do nothing.
 //
 // Left alone it is an hour, or the retention window when that is shorter. An
@@ -496,13 +516,13 @@ func resolvePruneInterval(cfg *relayConfig) error {
 		return nil
 	}
 
-	if cfg.retention == 0 {
+	if cfg.retention == 0 && cfg.maxPublishedRows == 0 {
 		return invalidConfig(
 			"prune interval %s is set without a retention window, so the sweep it paces never runs",
 			cfg.pruneInterval)
 	}
 
-	if cfg.pruneInterval > cfg.retention {
+	if cfg.retention > 0 && cfg.pruneInterval > cfg.retention {
 		return invalidConfig(
 			"prune interval %s exceeds retention %s, so a row would outlive its window by more than the window",
 			cfg.pruneInterval, cfg.retention)
@@ -515,17 +535,18 @@ func defaultRelayConfig() relayConfig {
 	var observer Observer
 
 	return relayConfig{
-		table:          defaultTable,
-		dialer:         nil,
-		maxConcurrency: defaultMaxConcurrency,
-		lease:          defaultLease,
-		publishTimeout: defaultPublishTimeout,
-		pollInterval:   defaultPollInterval,
-		retention:      0,
-		pruneInterval:  0,
-		retry:          nil,
-		observer:       observer,
-		stallAfter:     0,
+		table:            defaultTable,
+		dialer:           nil,
+		maxConcurrency:   defaultMaxConcurrency,
+		lease:            defaultLease,
+		publishTimeout:   defaultPublishTimeout,
+		pollInterval:     defaultPollInterval,
+		retention:        0,
+		maxPublishedRows: 0,
+		pruneInterval:    0,
+		retry:            nil,
+		observer:         observer,
+		stallAfter:       0,
 	}
 }
 

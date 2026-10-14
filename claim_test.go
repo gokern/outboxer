@@ -60,7 +60,7 @@ func Test_ScanPredicates(t *testing.T) {
 
 		args := map[string][]any{
 			"claim":   {60.0, 16},
-			"prune":   {3600.0, 1000},
+			"prune":   {time.Now().Add(-time.Hour), 1000},
 			"nextDue": {0.01},
 		}
 
@@ -269,4 +269,40 @@ func Test_ExecMode(t *testing.T) {
 		require.Equal(t, map[string]string{"k": "v"}, byTopic["single"].Headers)
 		require.Equal(t, []byte("plain"), byTopic["batched"].Payload)
 	}, simpleProtocol)
+}
+
+func Test_PublishedRetentionOrderedAccess(t *testing.T) {
+	t.Parallel()
+	withTable(t, 1, func(pool *pgxpool.Pool, table string) {
+		_, err := pool.Exec(
+			t.Context(),
+			fmt.Sprintf(
+				`INSERT INTO %[1]s(topic,payload,ready_at)
+SELECT 'pending','p'::bytea,now()+interval '1 day'
+FROM generate_series(1,10000);
+INSERT INTO %[1]s(topic,payload,published_at)
+SELECT 'published','p'::bytea,'2020-01-01'::timestamptz
+FROM generate_series(1,10000);
+ANALYZE %[1]s;`,
+				table,
+			),
+		)
+		require.NoError(t, err)
+		statements := outboxer.CountStatementsForTest(table)
+		cutoff := explainPlan(t, pool, statements["cutoff"], 100)
+		require.Contains(t, cutoff, "Index Only Scan Backward")
+		require.Contains(t, cutoff, table+"_published_order_idx")
+		require.NotContains(t, cutoff, "Sort")
+		batch := explainPlan(
+			t,
+			pool,
+			statements["batch"],
+			time.Date(2020, time.January, 1, 0, 0, 0, 0, time.UTC),
+			int64(19900),
+			1000,
+		)
+		require.Contains(t, batch, "Index Cond:")
+		require.Contains(t, batch, table+"_published_order_idx")
+		require.NotContains(t, batch, "Sort")
+	})
 }

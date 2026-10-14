@@ -173,3 +173,39 @@ func TestNewProducer(t *testing.T) {
 	require.NoError(t, err, "no options means the reference table")
 	require.NotNil(t, producer)
 }
+
+func TestPublishedCountOptions(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name          string
+		count         int64
+		age, interval time.Duration
+		invalid       bool
+		cadence       time.Duration
+	}{
+		{name: "negative", count: -1, invalid: true},
+		{name: "disabled", count: 0, cadence: time.Hour},
+		{name: "count default", count: 2, cadence: time.Hour},
+		{name: "count explicit", count: 2, interval: time.Second, cadence: time.Second},
+		{name: "disabled explicit", interval: time.Second, invalid: true},
+		{name: "age", age: time.Minute, cadence: time.Minute},
+		{name: "both", count: 2, age: time.Minute, cadence: time.Minute},
+		{name: "both invalid interval", count: 2, age: time.Minute, interval: time.Hour, invalid: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			opts := []outboxer.RelayOption{outboxer.WithMaxPublishedRows(tc.count), outboxer.WithRetention(tc.age)}
+			if tc.interval > 0 {
+				opts = append(opts, outboxer.WithPruneInterval(tc.interval))
+			}
+			relay, err := outboxer.NewRelay(&pgxpool.Pool{}, noopPublish, opts...)
+			if tc.invalid {
+				require.ErrorIs(t, err, outboxer.ErrInvalidConfig)
+
+				return
+			}
+			require.NoError(t, err)
+			require.Equal(t, tc.cadence, outboxer.PruneIntervalForTest(relay))
+		})
+	}
+}

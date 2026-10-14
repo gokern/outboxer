@@ -17,7 +17,7 @@ import (
 func Test_BatchLimitsUnderPlannerStrategies(t *testing.T) {
 	t.Parallel()
 
-	for _, operation := range []string{"claim", "prune"} {
+	for _, operation := range []string{"claim", "prune", "count"} {
 		for _, nestedLoop := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%s/nested_loop_%t", operation, nestedLoop), func(t *testing.T) {
 				t.Parallel()
@@ -25,7 +25,7 @@ func Test_BatchLimitsUnderPlannerStrategies(t *testing.T) {
 				withTable(t, 1, func(pool *pgxpool.Pool, table string) {
 					for range 3 {
 						id := insertRaw(t, pool, table, "batch", []byte("p"))
-						if operation == "prune" {
+						if operation != "claim" {
 							markPublishedAt(t, pool, table, id, 2*time.Hour)
 						}
 					}
@@ -51,10 +51,14 @@ func Test_BatchLimitsUnderPlannerStrategies(t *testing.T) {
 					}
 
 					args := []any{60.0, 2}
-					if operation == "prune" {
-						args[0] = 3600.0
+					if operation != "claim" {
+						args[0] = time.Now().Add(-time.Hour)
 					}
 					statement := outboxer.ScanStatementsForTest(table)[operation]
+					if operation == "count" {
+						statement = outboxer.CountStatementsForTest(table)["batch"]
+						args = []any{time.Now(), int64(3), 2}
+					}
 					changed, err := tx.Exec(t.Context(), statement, args...)
 					require.NoError(t, err)
 					require.Equal(t, int64(2), changed.RowsAffected(), "a legal plan must not exceed the batch limit")
