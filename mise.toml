@@ -10,8 +10,8 @@
 # does not read this file.
 
 [tools]
-golangci-lint = "2.14.0"
-"go:golang.org/x/vuln/cmd/govulncheck" = "1.8.0"
+golangci-lint = "2.15.0"
+"go:golang.org/x/vuln/cmd/govulncheck" = "1.9.0"
 
 [tasks.test]
 description = "Run the tests with the race detector and coverage (needs a Postgres)"

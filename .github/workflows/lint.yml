@@ -32,13 +32,13 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v7
         with:
-          go-version-file: go.mod
+          go-version: '1.27.3'
           check-latest: true
 
       - name: Set up mise
-        uses: jdx/mise-action@v5
+        uses: jdx/mise-action@v5.2.2
         with:
-          version: 2026.9.17 # pinned; bump by hand
+          version: 2026.10.17 # pinned; bump by hand
 
       - name: golangci-lint
         uses: golangci/golangci-lint-action@v9
@@ -62,13 +62,13 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v7
         with:
-          go-version-file: go.mod
+          go-version: '1.27.3'
           check-latest: true
 
       - name: Set up mise
-        uses: jdx/mise-action@v5
+        uses: jdx/mise-action@v5.2.2
         with:
-          version: 2026.9.17 # pinned; bump by hand
+          version: 2026.10.17 # pinned; bump by hand
 
       - name: Check both go.mod files are tidy
         run: mise run tidy
