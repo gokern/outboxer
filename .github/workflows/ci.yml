@@ -56,9 +56,9 @@ jobs:
           check-latest: true
 
       - name: Set up mise
-        uses: jdx/mise-action@v5
+        uses: jdx/mise-action@v5.2.2
         with:
-          version: 2026.9.17 # pinned; bump by hand
+          version: 2026.10.17 # pinned; bump by hand
 
       - name: Download modules
         run: go mod download

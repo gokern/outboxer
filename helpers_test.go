@@ -261,7 +261,7 @@ func relayRun(t *testing.T, relay *outboxer.Relay) func() error {
 		// failing here in fifteen seconds. And "never returns" is a failure this
 		// package now has tests for.
 		select {
-		case <-result:
+		case <-result: //nolint:errcheck // Cleanup waits for shutdown; stop() owns the returned error.
 		case <-time.After(settle):
 			t.Error("relay did not stop during cleanup")
 		}
