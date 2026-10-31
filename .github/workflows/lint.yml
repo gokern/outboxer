@@ -36,7 +36,7 @@ jobs:
           check-latest: true
 
       - name: Set up mise
-        uses: jdx/mise-action@v5.2.2
+        uses: jdx/mise-action@v5.2.3
         with:
           version: 2026.10.17 # pinned; bump by hand
 
@@ -66,7 +66,7 @@ jobs:
           check-latest: true
 
       - name: Set up mise
-        uses: jdx/mise-action@v5.2.2
+        uses: jdx/mise-action@v5.2.3
         with:
           version: 2026.10.17 # pinned; bump by hand
 
